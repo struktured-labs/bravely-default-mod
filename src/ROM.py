@@ -11,8 +11,10 @@ from Utilities import get_filename
 
 class PACK:
     def __init__(self, settings: dict[str,str]):
+        dir = os.getcwd()
         dirOut = settings.get('output_dir') or f"{os.getcwd()}/romfs_packed"
 
+        os.makedirs(dirOut, exist_ok=True)
         if settings['game'] == 'BD':
             self.pathOut = os.path.join(dirOut, '00040000000FC500', 'romfs')
             logFileName = os.path.join(dirOut, 'BD_mod.log')
@@ -42,17 +44,17 @@ class PACK:
             sheetNames = pickle.load(file)
 
 
+
         logfile = os.path.join(dirOut, f'error.log')
         if os.path.isfile(logfile):
-            os.remove(logfile)
-        logging.basicConfig(
-            filename=logfile,
-            filemode='a',
-            level=logging.INFO,
-        )
+            try: 
+                os.remove(logfile )
+            except:
+                pass
+
         logger = logging.getLogger()
 
-
+        print("CHDIR: " + self.pathIn)
         os.chdir(self.pathIn)
         moddedFiles = []
         skippedCrowd = []
@@ -144,7 +146,7 @@ class PACK:
         os.chdir(dir)
 
         logger.removeHandler(logger.handlers[0])
-        if not os.path.getsize(logfile):
+        if os.path.exists(logfile) and not os.path.getsize(logfile):
             os.remove(logfile)
 
 
@@ -208,6 +210,7 @@ class UNPACK:
             print("PICKLE3")
             pickle.dump(sheetNames, file)
             print("PICKLE DONE")
+
 
         os.chdir(dir)
 

@@ -16,7 +16,6 @@ from typing import Literal
 
 GameType = Literal['BD', 'BS']
 
-logging.basicConfig(level=logging.DEBUG)
 class CliApplication:
     def __init__(self, settings:dict[str,str]|None=None):
         self.homeDir = os.getcwd()
@@ -53,8 +52,7 @@ class CliApplication:
             self.settings["output_dir"] = args.output_dir        
         else:
             self.settings["output_dir"] = os.getcwd() + "/" + f"romfs_{args.action}ed"
-          
-
+        print(f"Output directory: {self.settings['output_dir']}")
         match args.action:
             case 'unpack':
                 self.settings['action'] = 'unpack'
@@ -190,4 +188,5 @@ def pack(settings: dict[str,str]) -> tuple[bool, Exception|None]:
 
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG)
     CliApplication()
