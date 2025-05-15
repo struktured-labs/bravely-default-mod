@@ -1,0 +1,15 @@
+**/__pycache__
+build
+dist
+*~
+seed_*
+*.xlsx*
+*.csv*
+*.txt
+\#*
+settingsM*.json
+settingsW*.json
+Bravely*
+romfs*
+citra*
+*.pickle
