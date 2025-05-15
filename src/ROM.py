@@ -10,11 +10,9 @@ sys.path.append('src')
 from Utilities import get_filename
 
 class PACK:
-    def __init__(self, settings):
-        dir = os.getcwd()
+    def __init__(self, settings: dict[str,str]):
+        dirOut = settings.get('output_dir') or f"{os.getcwd()}/romfs_packed"
 
-        # Setup output paths and files
-        dirOut = os.path.join(dir, 'romfs_packed')
         if settings['game'] == 'BD':
             self.pathOut = os.path.join(dirOut, '00040000000FC500', 'romfs')
             logFileName = os.path.join(dirOut, 'BD_mod.log')
@@ -60,7 +58,7 @@ class PACK:
         skippedCrowd = []
         skippedFiles = []
         skippedSheets = []
-        for root, dirs, files in os.walk('.'):
+        for root, _, files in os.walk('.'):
             root = root[2:]
             spreadsheets = list(filter(lambda f: '.xls' in f, files))
             bytefiles = list(filter(lambda f: '.xls' not in f, files))
@@ -151,7 +149,7 @@ class PACK:
 
 
 class UNPACK:
-    def __init__(self, settings):
+    def __init__(self, settings:dict[str,str]):
         dir = os.getcwd()
 
         if settings['game'] == 'BD':
@@ -160,7 +158,9 @@ class UNPACK:
             self.headersPath = os.path.join(dir, 'romfs_packed', 'headers_BS')
 
         self.pathIn = settings['rom']
-        self.pathOut = os.path.join(dir, f"romfs_unpacked")
+        self.pathOut = settings.get('output_dir') or f"{os.getcwd()}/romfs_unpacked"
+
+
         if os.path.isdir(self.pathOut):
             shutil.rmtree(self.pathOut)
         os.makedirs(self.pathOut)
@@ -169,7 +169,7 @@ class UNPACK:
         crowdSpecs = {}
         crowdFiles = {}
         sheetNames = {}
-        for root, dirs, files in os.walk('.'):
+        for root, _, files in os.walk('.'):
             root = root[2:]
             for file in files:
                 if file == 'index.fs':
@@ -187,6 +187,7 @@ class UNPACK:
                     try:
                         sheetNames.update(table.dumpSheet())
                     except:
+                        logging.exception('Error dumping spreadsheet')
                         sys.exit(f"Error dumping spreadsheet {fileName}")
 
                 crowdSpecs.update(table.crowdSpecs)
@@ -200,10 +201,14 @@ class UNPACK:
         # Dump data needed for packing
         os.chdir(self.pathOut)
         with lzma.open('do_not_remove.xz', 'wb') as file:
+            print("PICKLE1")
             pickle.dump(crowdSpecs, file)
+            print("PICKLE2")
             pickle.dump(crowdFiles, file)
+            print("PICKLE3")
             pickle.dump(sheetNames, file)
-            
+            print("PICKLE DONE")
+
         os.chdir(dir)
 
     def loadCrowd(self, path):
@@ -216,7 +221,7 @@ class UNPACK:
         shutil.copy(src, dest)
         return CROWD(dest, self.pathOut, self.headersPath)
 
-    def loadTable(self, fileName):
+    def loadTable(self, fileName:str):
         src = os.path.join(self.pathIn, fileName)
         dest = os.path.join(self.pathOut, fileName)
         base = os.path.dirname(dest)

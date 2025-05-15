@@ -1,5 +1,4 @@
 from release import RELEASE
-import hjson
 import os
 import shutil
 import hashlib
@@ -32,10 +31,12 @@ class CliApplication:
         self.settings['rom'] = ""
         self.settings['game'] = ""
         
-        parser = argparse.ArgumentParser(description=MAIN_TITLE)
-        parser.add_argument("action", type=str, choices=['unpack', 'pack'], help="Action to perform")
-        parser.add_argument('-r', '--rom', type=str, help='Path to the romfs directory', default="romfs_dir")
-        parser.add_argument('-g', '--game', type=str, choices=['BD', 'BS'], default='BD', help='Game type')
+        parser = argparse.ArgumentParser(description=MAIN_TITLE, usage="%(prog)s [options] <action>")
+        parser.add_argument("action", type=str, choices=['unpack', 'pack'], help="Action to perform. Required.")
+        parser.add_argument('-r', '--rom', type=str, help='Path to the romfs directory. Required.', required=True, default=None)
+        parser.add_argument('-g', '--game', type=str, choices=['BD', 'BS'], default='BD', help='Game type. Defaults to Bravely Default (BD)')
+        parser.add_argument('-o', '--output-dir', type=str, default=None, help="Target output directory. Defaults to romfs_{action}.")
+
 
         args = parser.parse_args()
         if args.rom:
@@ -46,6 +47,13 @@ class CliApplication:
             self.settings['game'] = args.game
         else:
             raise ValueError('No game type provided')
+   
+        if args.output_dir:
+            print(f"Output directory: {args.output_dir}")
+            self.settings["output_dir"] = args.output_dir        
+        else:
+            self.settings["output_dir"] = os.getcwd() + "/" + f"romfs_{args.action}ed"
+          
 
         match args.action:
             case 'unpack':
@@ -146,22 +154,22 @@ class CliApplication:
         dir = os.getcwd()
         unpacked, error = unpack(settings or self.settings)
         if unpacked:
-            print('Unpacking...done!', 'blue')
+            print('Unpacking...done!')
         else:
-            print('Mrgrgrgrgr!', 'red')
-            print('Unpacking failed:' + str(error), 'red')
+            print('Mrgrgrgrgr!')
+            print('Unpacking failed:' + str(error))
         os.chdir(dir)
 
     def pack(self, settings:dict[str,str,]|None=None):
 
         dir = os.getcwd()
-        print('Packing....', 'blue')
+        print('Packing....')
         packed, error = pack(settings or self.settings)
         if packed:
-            print('Packing...done!', 'blue')
+            print('Packing...done!')
         else:
-            print('Mrgrgrgrgr!', 'red')
-            print('Packing failed: ' + str(error), 'red')
+            print('Mrgrgrgrgr!')
+            print('Packing failed: ' + str(error))
         os.chdir(dir)
 
 

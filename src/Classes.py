@@ -223,18 +223,18 @@ class CROWDFILES:
             self._moddedFiles.insert(0, fileName)
             return
 
-    def allFilesExist(self, fileList=None):
+    def allFilesExist(self, fileList: list[str]|None=None) -> bool:
         if fileList is None:
             fileList = self.fileList
         logger = logging.getLogger()
-        for fileName in fileList:
+        for fileName in fileList or []:
             fileName = os.path.join(self.root, fileName)
             if not os.path.isfile(fileName):
                 logger.info(f'Missing {fileName}!')
                 return False
         return True
 
-    def _loadSheet(self, fileName):
+    def _loadSheet(self, fileName:str):
         self.data = {}
         fileName = os.path.join(self.root, fileName)
         if os.path.isfile(fileName):
