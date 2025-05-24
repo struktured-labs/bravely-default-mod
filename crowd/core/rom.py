@@ -1,13 +1,11 @@
-from Classes import CROWD, TABLE, CROWDFILES, TABLEFILE
+from .classes import CROWD, TABLE, CROWDFILES, TABLEFILE
 import os
 import shutil
 import sys
 import lzma
 import pickle
-import hashlib
 import logging
-sys.path.append('src')
-from Utilities import get_filename
+from .utils import get_filename
 
 class PACK:
     def __init__(self, settings: dict[str,str]):

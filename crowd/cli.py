@@ -1,4 +1,4 @@
-from release import RELEASE
+from .release import RELEASE
 import os
 import shutil
 import hashlib
@@ -7,9 +7,9 @@ import pickle
 import sys
 import argparse
 import logging
-sys.path.append('src')
-from Utilities import get_filename
-from ROM import UNPACK, PACK
+from pathlib import Path
+from .core.utils import get_filename
+from .core.rom import UNPACK, PACK
 
 MAIN_TITLE = f"Bravely Crowd v{RELEASE}"
 from typing import Literal
@@ -49,7 +49,7 @@ class CliApplication:
    
         if args.output_dir:
             print(f"Output directory: {args.output_dir}")
-            self.settings["output_dir"] = args.output_dir        
+            self.settings["output_dir"] = str(Path(args.output_dir).resolve())
         else:
             self.settings["output_dir"] = os.getcwd() + "/" + f"romfs_{args.action}ed"
         print(f"Output directory: {self.settings['output_dir']}")
@@ -186,7 +186,9 @@ def pack(settings: dict[str,str]) -> tuple[bool, Exception|None]:
         return False, e
     return True, None
 
-
-if __name__ == '__main__':
+def main():
     logging.basicConfig(level=logging.DEBUG)
     CliApplication()
+
+if __name__ == '__main__':
+    main()
