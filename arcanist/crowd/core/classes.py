@@ -203,9 +203,9 @@ class CROWDFILES:
         return self._isModified
 
     @property
-    def moddedFiles(self):
+    def moddedFiles(self) -> list[str]:
         if not self.isModified:
-            self._moddedFiles = []
+            self._moddedFiles : list[str] = []
         return self._moddedFiles
 
     def loadData(self):

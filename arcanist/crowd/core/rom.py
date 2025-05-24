@@ -54,10 +54,10 @@ class PACK:
 
         print("CHDIR: " + self.pathIn)
         os.chdir(self.pathIn)
-        moddedFiles = []
-        skippedCrowd = []
-        skippedFiles = []
-        skippedSheets = []
+        moddedFiles : list[str] = []
+        skippedCrowd : list[str] = []
+        skippedFiles : list[str] = []
+        skippedSheets : list[str] = []
         for root, _, files in os.walk('.'):
             root = root[2:]
             spreadsheets = list(filter(lambda f: '.xls' in f, files))

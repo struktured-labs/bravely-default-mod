@@ -4,6 +4,10 @@
 #@menupath
 #@toolbar
 
+# Patches the 9999 everything cap in Bravely Default to 999,999
+# Includes at least damage and heal caps, possibly more.
+
+# Requires current program to be a Bravely Default "code.bin" ROM loaded in Ghidra
 from ghidra.program.model.data import DWordDataType
 from ghidra.program.model.mem import MemoryAccessException
 from ghidra.program.model.symbol import SourceType
