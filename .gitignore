@@ -5,7 +5,6 @@ dist
 seed_*
 *.xlsx*
 *.csv*
-*.txt
 \#*
 settingsM*.json
 settingsW*.json
