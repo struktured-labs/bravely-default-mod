@@ -4,7 +4,7 @@ import shutil
 import hashlib
 import lzma
 import pickle
-import sys
+import os
 import argparse
 import logging
 from pathlib import Path
@@ -39,7 +39,7 @@ class CliApplication:
 
         args = parser.parse_args()
         if args.rom:
-            self.settings['rom'] = args.rom
+            self.settings['rom'] = os.path.realpath(args.rom)
         else:
             raise ValueError('No rom path provided')
         if args.game:
@@ -49,7 +49,7 @@ class CliApplication:
    
         if args.output_dir:
             print(f"Output directory: {args.output_dir}")
-            self.settings["output_dir"] = str(Path(args.output_dir).resolve())
+            self.settings["output_dir"] = os.path.realpath(args.output_dir)
         else:
             self.settings["output_dir"] = os.getcwd() + "/" + f"romfs_{args.action}ed"
         print(f"Output directory: {self.settings['output_dir']}")
