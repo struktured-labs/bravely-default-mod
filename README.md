@@ -1,50 +1,22 @@
-### ABOUT
+# A bravely default editor toolkit
 
-This is a little editor for data tables in Bravely Default and Bravely
-Second. It unpacks the crowd files, organizes data into speadsheets
-whenever possible, and packs edited files and spreadsheets into a mod.
+## Quick start
 
-### USAGE
 
-This tool is only compatible with an extracted RomFS. You'll need to do
-this first with other tools such as GodMode9 or
-[DotNet3DS](https://github.com/evandixon/DotNet3dsToolkit/releases). Follow
-[this
-link](https://gist.github.com/PixelSergey/73d0a4bc1437dbaa53a1d1ce849fdda1)
-for help with GodMode9.
+- Use `bin/unpack.sh` to prep a cia file.
+- Use `bin/crowd.sh` to extract excel editable game data
 
-When that is done, you can run executable from the Releases page. To
-unpack the files and make spreadsheets, just browse for the RomFS
-folder, select which game is being used, and select Unpack.
+## Arcanist (Forked from bravely crowd)
 
-Unpacked files will be dumped in the folder `romfs_unpacked`. There
-you can edit spreadsheets or any of the other file with a hex
-editor. When done, run the executable, browse for `romfs_unpacked`,
-and click Pack to pack the files and build a mod. The mod will be
-output in the folder `romfs_packed`, along with a log file listing
-each file modified. You can run your mod on your console, for example,
-with [Luma
-LayeredFS](https://gist.github.com/PixelSergey/5dbb4a9b90d290736353fa58e4fcbb42).
+### Description
 
-### IMPORTANT NOTES
+Extracts a spread sheet of editable values from a bravely default bin file. See arcanist/README.md
 
-Editing files, even in a spreadsheet, will be a bit complicated. Please read this carefully:
+## Shell scripts
 
-- The executable is only compatible with spreadsheets of the `.xls`
-  format. Do not reformat these files into `.xlsx` or anything else.
+-  Unpacks a cia file into components suitable for decompilation and otherwise.
 
-- Unpacking and packing files can be a bit slow. You can speed this up
-  by removing large folders you won't be modding, such as `Graphics`
-  or `Sound`. Never remove files individually, as this can lead to
-  issues when packing crowds.
+## Ghidra
 
-- Some spreadsheets have text in them. These columns are labeled
-  `Text` and `Labels`. When these are present you'll also see some
-  columns labeled `Text Pntr` and `Label Pntr`. These columns need to
-  be updated if you change any text, but don't worry! The tool will
-  automatically update them for you!
+ - Change damage cap from 9999 to 999,999 given a loaded code.bin
 
-- You can label column headers in any spreadsheet you're reading or
-  editing. These headers will be saved in the
-  `romfs_packed/headers_XX` folder and will be used when unpacked in
-  the future. Don't move or delete this folder.
