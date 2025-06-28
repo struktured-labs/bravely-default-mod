@@ -8,7 +8,7 @@ if [[ $# -ne 2 ]]; then
   exit 1
 fi
 
-CIA=$1
+CIA=`realpath $1`
 
 if [[ ! -f "$CIA" ]]; then
   echo Bravely Default CIA file $CIA not found.
@@ -19,10 +19,10 @@ QUALIFIER=$2
 OUTDIR=$QUALIFIER
 mkdir -p $OUTDIR
 
-pushd  $OUTDIR
+pushd $OUTDIR
 
 mkdir -p cxi
-echo "[1] Extracting CIA with ctrtool..."
+echo "[1] Extracting CIA with ctrtool to $QUALIFIER"
 ctrtool --contents="content.0000.cxi" --exefs=cxi/exefs.bin --romfs=cxi/romfs.bin \
   --exefsdir=cxi/exefs_dir --romfsdir=cxi/romfs_dir --exheader=cxi/exheader.bin $CIA
 
