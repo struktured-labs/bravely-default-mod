@@ -22,6 +22,9 @@ help:
 	@echo "    Builds a conda environment for development and pip installs anything outside conda's scope."
 	@echo make crowd-unpack
 	@echo "    Unpacks bravely crowd data."
+	@echo make crowd-pack
+	@echo "    Packs bravely crowd data."
+
 
 
 
@@ -39,7 +42,7 @@ crowd-unpack:
 	$(conda_cmd) run -n $(env_name) bin/crowd.sh -r $(build_dir)/$(qualifier) -o $(build_dir)/crowd-$(qualifier)-unpacked -g $(game) unpack
 
 crowd-pack:
-	$(conda_cmd) run -n $(env_name) bin/crowd.sh -r $(build_dir)/$(qualifier) -o $(build_dir)/crowd-$(qualifier)-packed -g $(game) pack
+	$(conda_cmd) run -n $(env_name) bin/crowd.sh -r $(build_dir)/crowd-$(qualifier)-unpacked -o $(build_dir)/crowd-$(qualifier)-packed -g $(game) pack
 
 
 
