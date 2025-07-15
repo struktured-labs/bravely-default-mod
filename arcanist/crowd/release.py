@@ -1,1 +1,1 @@
-RELEASE="0.2.3-beta"
+RELEASE = "0.2.3-beta"

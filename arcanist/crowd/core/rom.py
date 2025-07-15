@@ -7,22 +7,23 @@ import pickle
 import logging
 from .utils import get_filename
 
+
 class PACK:
-    def __init__(self, settings: dict[str,str]):
+    def __init__(self, settings: dict[str, str]):
         dir = os.getcwd()
-        dirOut = settings.get('output_dir') or f"{os.getcwd()}/romfs_packed"
+        dirOut = settings.get("output_dir") or f"{os.getcwd()}/romfs_packed"
 
         os.makedirs(dirOut, exist_ok=True)
-        if settings['game'] == 'BD':
-            self.pathOut = os.path.join(dirOut, '00040000000FC500', 'romfs')
-            logFileName = os.path.join(dirOut, 'BD_mod.log')
-            dataFile = get_filename('data/bd.xz')
-            self.headersOut = os.path.join(dirOut, 'headers_BD')
-        elif settings['game'] == 'BS':
-            self.pathOut = os.path.join(dirOut, '000400000017BA00', 'romfs')
-            logFileName = os.path.join(dirOut, 'BS_mod.log')
-            dataFile = get_filename('data/bs.xz')
-            self.headersOut = os.path.join(dirOut, 'headers_BS')
+        if settings["game"] == "BD":
+            self.pathOut = os.path.join(dirOut, "00040000000FC500", "romfs")
+            logFileName = os.path.join(dirOut, "BD_mod.log")
+            dataFile = get_filename("data/bd.xz")
+            self.headersOut = os.path.join(dirOut, "headers_BD")
+        elif settings["game"] == "BS":
+            self.pathOut = os.path.join(dirOut, "000400000017BA00", "romfs")
+            logFileName = os.path.join(dirOut, "BS_mod.log")
+            dataFile = get_filename("data/bs.xz")
+            self.headersOut = os.path.join(dirOut, "headers_BS")
         else:
             sys.exit(f"{settings['game']} is not allowed as the game setting!")
 
@@ -33,20 +34,18 @@ class PACK:
         if not os.path.isdir(self.headersOut):
             os.makedirs(self.headersOut)
 
-        self.pathIn = settings['rom']
-        dataFile = get_filename(os.path.join(self.pathIn, 'do_not_remove.xz'))
+        self.pathIn = settings["rom"]
+        dataFile = get_filename(os.path.join(self.pathIn, "do_not_remove.xz"))
 
-        with lzma.open(dataFile,'rb') as file:
+        with lzma.open(dataFile, "rb") as file:
             crowdSpecs = pickle.load(file)
             crowdFiles = pickle.load(file)
             sheetNames = pickle.load(file)
 
-
-
-        logfile = os.path.join(dirOut, f'error.log')
+        logfile = os.path.join(dirOut, f"error.log")
         if os.path.isfile(logfile):
-            try: 
-                os.remove(logfile )
+            try:
+                os.remove(logfile)
             except:
                 pass
 
@@ -54,20 +53,20 @@ class PACK:
 
         print("CHDIR: " + self.pathIn)
         os.chdir(self.pathIn)
-        moddedFiles : list[str] = []
-        skippedCrowd : list[str] = []
-        skippedFiles : list[str] = []
-        skippedSheets : list[str] = []
-        for root, _, files in os.walk('.'):
+        moddedFiles: list[str] = []
+        skippedCrowd: list[str] = []
+        skippedFiles: list[str] = []
+        skippedSheets: list[str] = []
+        for root, _, files in os.walk("."):
             root = root[2:]
-            spreadsheets = list(filter(lambda f: '.xls' in f, files))
-            bytefiles = list(filter(lambda f: '.xls' not in f, files))
-            bytefiles = list(filter(lambda f: '.xz' not in f, bytefiles))
+            spreadsheets = list(filter(lambda f: ".xls" in f, files))
+            bytefiles = list(filter(lambda f: ".xls" not in f, files))
+            bytefiles = list(filter(lambda f: ".xz" not in f, bytefiles))
 
             if root in crowdFiles:
                 crowd = CROWDFILES(root, crowdFiles, crowdSpecs, sheetNames)
                 if not crowd.allFilesExist():
-                    skippedCrowd.append(f'{root}/crowd.xls')
+                    skippedCrowd.append(f"{root}/crowd.xls")
                 else:
                     crowd.loadData()
                     if crowd.isModified:
@@ -75,12 +74,12 @@ class PACK:
                         moddedFiles.append(crowd.moddedFiles)
                     crowd.dumpHeaders(self.headersOut)
 
-                if 'crowd.xls' in spreadsheets:
-                    spreadsheets.remove('crowd.xls')
-                if 'crowd.fs' in bytefiles:
-                    bytefiles.remove('crowd.fs')
-                if 'index.fs' in bytefiles:
-                    bytefiles.remove('index.fs')
+                if "crowd.xls" in spreadsheets:
+                    spreadsheets.remove("crowd.xls")
+                if "crowd.fs" in bytefiles:
+                    bytefiles.remove("crowd.fs")
+                if "index.fs" in bytefiles:
+                    bytefiles.remove("index.fs")
                 bytefiles = list(filter(lambda x: x not in crowdFiles[root], bytefiles))
 
             for sheet in spreadsheets:
@@ -113,33 +112,33 @@ class PACK:
         skippedCrowd.sort()
         skippedSheets.sort()
         skippedFiles.sort()
-        with open(logFileName, 'w') as file:
+        with open(logFileName, "w") as file:
             if moddedFiles:
                 for m in moddedFiles:
-                    file.write(m.pop(0) + '\n')
+                    file.write(m.pop(0) + "\n")
                     for mi in m:
-                        file.write('    - ' + mi + '\n')
+                        file.write("    - " + mi + "\n")
             else:
-                file.write('No modified files!\n')
-                shutil.rmtree(self.pathOut[:-6]) # titleID directory
+                file.write("No modified files!\n")
+                shutil.rmtree(self.pathOut[:-6])  # titleID directory
 
             if skippedCrowd:
-                file.write('\n\n')
-                file.write('Skipped crowd files\n')
+                file.write("\n\n")
+                file.write("Skipped crowd files\n")
                 for fileName in skippedCrowd:
-                    file.write(f'    {fileName}\n')
+                    file.write(f"    {fileName}\n")
 
             if skippedSheets:
-                file.write('\n\n')
-                file.write('Skipped spreadsheets\n')
+                file.write("\n\n")
+                file.write("Skipped spreadsheets\n")
                 for fileName in skippedSheets:
-                    file.write(f'    {fileName}\n')
+                    file.write(f"    {fileName}\n")
 
             if skippedFiles:
-                file.write('\n\n')
-                file.write('Skipped files\n')
+                file.write("\n\n")
+                file.write("Skipped files\n")
                 for fileName in skippedFiles:
-                    file.write(f'    {fileName}\n')
+                    file.write(f"    {fileName}\n")
 
         os.chdir(dir)
 
@@ -149,17 +148,16 @@ class PACK:
 
 
 class UNPACK:
-    def __init__(self, settings:dict[str,str]):
+    def __init__(self, settings: dict[str, str]):
         dir = os.getcwd()
 
-        if settings['game'] == 'BD':
-            self.headersPath = os.path.join(dir, 'romfs_packed', 'headers_BD')
+        if settings["game"] == "BD":
+            self.headersPath = os.path.join(dir, "romfs_packed", "headers_BD")
         else:
-            self.headersPath = os.path.join(dir, 'romfs_packed', 'headers_BS')
+            self.headersPath = os.path.join(dir, "romfs_packed", "headers_BS")
 
-        self.pathIn = settings['rom']
-        self.pathOut = settings.get('output_dir') or f"{os.getcwd()}/romfs_unpacked"
-
+        self.pathIn = settings["rom"]
+        self.pathOut = settings.get("output_dir") or f"{os.getcwd()}/romfs_unpacked"
 
         if os.path.isdir(self.pathOut):
             shutil.rmtree(self.pathOut)
@@ -169,29 +167,29 @@ class UNPACK:
         crowdSpecs = {}
         crowdFiles = {}
         sheetNames = {}
-        for root, _, files in os.walk('.'):
+        for root, _, files in os.walk("."):
             root = root[2:]
             for file in files:
-                if file == 'index.fs':
+                if file == "index.fs":
                     continue
                 fileName = os.path.join(root, file)
-                if file == 'crowd.fs':
+                if file == "crowd.fs":
                     table = self.loadCrowd(root)
                     table.dumpFiles(self.pathOut)
                 else:
                     table = self.loadTable(fileName)
-                print(f'Loaded {fileName}')
+                print(f"Loaded {fileName}")
 
                 if table.dumpSpreadsheet:
-                    print(f'Dumping spreadsheet {fileName}')
+                    print(f"Dumping spreadsheet {fileName}")
                     try:
                         sheetNames.update(table.dumpSheet())
                     except:
-                        logging.exception('Error dumping spreadsheet')
+                        logging.exception("Error dumping spreadsheet")
                         sys.exit(f"Error dumping spreadsheet {fileName}")
 
                 crowdSpecs.update(table.crowdSpecs)
-                if file == 'crowd.fs':
+                if file == "crowd.fs":
                     baseNames = []
                     for key in table.crowdSpecs:
                         name = os.path.basename(key)
@@ -200,7 +198,7 @@ class UNPACK:
 
         # Dump data needed for packing
         os.chdir(self.pathOut)
-        with lzma.open('do_not_remove.xz', 'wb') as file:
+        with lzma.open("do_not_remove.xz", "wb") as file:
             print("PICKLE1")
             pickle.dump(crowdSpecs, file)
             print("PICKLE2")
@@ -209,20 +207,19 @@ class UNPACK:
             pickle.dump(sheetNames, file)
             print("PICKLE DONE")
 
-
         os.chdir(dir)
 
     def loadCrowd(self, path):
         dest = os.path.join(self.pathOut, path)
         if not os.path.isdir(dest):
             os.makedirs(dest)
-        src = os.path.join(self.pathIn, path, 'crowd.fs')
+        src = os.path.join(self.pathIn, path, "crowd.fs")
         shutil.copy(src, dest)
-        src = os.path.join(self.pathIn, path, 'index.fs')
+        src = os.path.join(self.pathIn, path, "index.fs")
         shutil.copy(src, dest)
         return CROWD(dest, self.pathOut, self.headersPath)
 
-    def loadTable(self, fileName:str):
+    def loadTable(self, fileName: str):
         src = os.path.join(self.pathIn, fileName)
         dest = os.path.join(self.pathOut, fileName)
         base = os.path.dirname(dest)
