@@ -1,10 +1,8 @@
-name: bd2
+name: bd-dev
 channels:
   - conda-forge
 dependencies:
-  - _libgcc_mutex=0.1=conda_forge
-  - _openmp_mutex=4.5=2_gnu
-  - anyio=4.9.0=pyh29332c3_0
+  - anyio=4.9.0
   - argon2-cffi=25.1.0=pyhd8ed1ab_0
   - argon2-cffi-bindings=21.2.0=py313h536fd9c_5
   - arrow=1.3.0=pyhd8ed1ab_1
@@ -29,7 +27,7 @@ dependencies:
   - defusedxml=0.7.1=pyhd8ed1ab_0
   - exceptiongroup=1.3.0=pyhd8ed1ab_0
   - executing=2.2.0=pyhd8ed1ab_0
-  - fqdn=1.5.1=pyhd8ed1ab_1
+  - fqdn=1.5.1=pyhd8ed1ab_1G
   - h11=0.16.0=pyhd8ed1ab_0
   - h2=4.2.0=pyhd8ed1ab_0
   - hjson-py=3.1.0=pyhd8ed1ab_1
@@ -93,7 +91,7 @@ dependencies:
   - parso=0.8.4=pyhd8ed1ab_1
   - pexpect=4.9.0=pyhd8ed1ab_1
   - pickleshare=0.7.5=pyhd8ed1ab_1004
-  - pip=25.1.1=pyh145f28c_0
+  - pip=25.1.1=pyh145f28c_0G
   - pkgutil-resolve-name=1.3.10=pyhd8ed1ab_2
   - platformdirs=4.3.8=pyhe01879c_0
   - prometheus_client=0.22.1=pyhd8ed1ab_0
@@ -150,5 +148,5 @@ dependencies:
   - pandas
   - black
   - pytest
-
-prefix: "/home/struktured/micromamba/envs/bd2"
+  - openpyxl
+prefix: "/home/struktured/micromamba/envs/bd-dev"

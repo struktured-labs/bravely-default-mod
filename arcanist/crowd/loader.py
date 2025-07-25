@@ -1,11 +1,12 @@
 import pandas as pd
 import numpy as np
-from typing import Mapping
+from typing import Mapping, Sequence
 from collections.abc import Iterable
 from functools import lru_cache
 from pathlib import Path
 from dataclasses import dataclass
 from dataclasses import field
+import yaml
 
 # Design idea:
 # Most functions return a dataframe.
@@ -21,10 +22,11 @@ CROWD_FILE_NAME = "crowd.xls"
 
 
 def _truncated_path(path: str | Path) -> str:
+
     path = Path(path)
-    # Get last two folders of the path
-    # Get last two folders of the path, NOT THE FILENAME itself
-    parts = path.parts[-2:]  # Get the last two parts of the path
+    if len(path.parts) == 2:
+        return str(path).strip("/")
+    parts = path.parts[-3:-1]
     return "/".join(parts)  # Join them with a slash
 
 
@@ -115,23 +117,74 @@ class CrowdSchema:
     columns: Mapping[int, str] = field(default_factory=lambda: dict[int, str]())
 
 
-type CrowdMapping = Mapping[str, CrowdSchema]
 
 
 @dataclass(frozen=True)
 class CrowdSchemaOverrides:
     path: str
-    schemas: CrowdMapping = field(default_factory=lambda: dict[str, CrowdSchema]())
+    schemas: Sequence[CrowdSchema] = field(default_factory=lambda: list[CrowdSchema]())
 
     def __iter__(self):
         """Return an iterator over the schemas."""
-        return iter(self.schemas.items())
+        return iter(self.schemas)
 
+    class Builder:
+        def __init__(self, path: str):
+            self.path = path
+            self.schemas: list[CrowdSchema] = []
+        def add(
+            self,
+            sheet: str, *,
+            index: Mapping[int, str] | None = None,
+            columns: Mapping[int, str] | None = None,
+        ) -> 'CrowdSchemaOverrides.Builder':
+            if index is None:
+                index = {}
+            if columns is None:
+                columns = {}
+            self.schemas.append(CrowdSchema(sheet, index, columns))
+            return self
+        def build(self) -> 'CrowdSchemaOverrides':
+            return CrowdSchemaOverrides(self.path, self.schemas)
 
+    @staticmethod
+    def builder(path: str) -> 'CrowdSchemaOverrides.Builder':
+        return CrowdSchemaOverrides.Builder(path)
+   
+    @staticmethod
+    def save(overrides: Iterable['CrowdSchemaOverrides'], root_dir: str | Path = ".", file_name: str | Path = "crowd_overrides.yaml"):
+        """Save the crowd schema overrides to a file.
+
+        Args:
+            overrides (Iterable[CrowdSchemaOverrides]): The overrides to save.
+            root_dir (str | Path): The directory where the file will be saved.
+        """
+        file_path = Path(root_dir) / file_name
+        with open(file_path, "w") as f:
+            ser = yaml.dump(overrides)
+            f.write(ser)
+
+    @staticmethod
+    def load(file_or_dir: str | Path = ".", file_name: str | Path = "crowd_overrides.yaml") -> Iterable['CrowdSchemaOverrides']:
+        """Load crowd schema overrides from a file.
+
+        Args:
+            file_or_dir (str | Path): The file or directory where the overrides are stored.
+            file_name (str | Path): The name of the overrides file.
+        
+        Returns:
+            Iterable[CrowdSchemaOverrides]: The loaded overrides.
+        """
+        file_path = Path(file_or_dir) / file_name
+        if not file_path.is_file():
+            raise ValueError(f"File {file_path} does not exist.")
+        with open(file_path, "r") as f:
+            return yaml.safe_load(f)
+        
 def annotate(
     crowd_data: CrowdData | Path | str,
     *,
-    overrides: Iterable[CrowdSchemaOverrides] = (),
+    overrides: Iterable[CrowdSchemaOverrides]|CrowdSchemaOverrides = (),
     allow_unknown: bool = False,
 ) -> CrowdData:
 
@@ -141,6 +194,12 @@ def annotate(
         case str() | Path() as file:
             crowd_data = load(file)
 
+    match overrides:
+        case CrowdSchemaOverrides() as override:
+            overrides = [override]
+        case Iterable() as overrides:
+            pass
+
     for override in overrides:
         raw_path = override.path
         path = _truncated_path(raw_path)
@@ -149,9 +208,10 @@ def annotate(
                 print(f"Dataset {path} not found ({raw_path}), skipping annotation.")
                 continue
             else:
-                raise ValueError(f"Dataset {path} not found in the loaded data.")
+                raise ValueError(f"Dataset {path} derived from {raw_path} not found in the loaded data.")
         ds: dict[str, pd.DataFrame] = crowd_data[path]
-        for sheet, schema in override.schemas.items():
+        for schema in override.schemas:
+            sheet = schema.sheet
             if sheet in ds:
                 df = ds[sheet]
                 for idx, new_col in schema.columns.items():
@@ -196,3 +256,18 @@ def annotate(
                     )
 
     return crowd_data
+
+
+def save(crowd_data: CrowdData, root_dir: str|Path = "."):
+    """Save the crowd data to Excel files.
+
+    Args:
+        crowd_data (CrowdData): The crowd data to save.
+        root_dir (str | Path): The directory where the files will be saved.
+    """
+    for path, sheets in crowd_data.items():
+        file_path = Path(root_dir) / Path(path) / CROWD_FILE_NAME
+        with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
+            for sheet_name, df in sheets.items():
+                df.to_excel(writer, sheet_name=sheet_name, index=True) #type: ignore
+        print(f"Saved crowd data to {file_path}")
