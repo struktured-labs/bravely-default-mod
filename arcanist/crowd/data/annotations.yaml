@@ -1,7 +1,5 @@
 - !!python/object:arcanist.crowd.loader.CrowdSchema
-  columns:
-    5: CriticalHit
+  columns:    5: CriticalHit
   index:
-    0: MinPercent
-    1: MaxPerecent
+    0: MinPercent    1: MaxPerecent
   sheet: BuffLimit.btb

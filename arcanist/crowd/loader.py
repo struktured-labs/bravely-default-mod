@@ -266,7 +266,9 @@ def save(crowd_data: CrowdData, root_dir: str|Path = "."):
         root_dir (str | Path): The directory where the files will be saved.
     """
     for path, sheets in crowd_data.items():
-        file_path = Path(root_dir) / Path(path) / CROWD_FILE_NAME
+        prefix=Path(root_dir) / Path(path) 
+        prefix.mkdir(parents=True, exist_ok=True)
+        file_path = prefix / CROWD_FILE_NAME
         with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
             for sheet_name, df in sheets.items():
                 df.to_excel(writer, sheet_name=sheet_name, index=True) #type: ignore

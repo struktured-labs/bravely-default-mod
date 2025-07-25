@@ -2,9 +2,7 @@
 
 ## Quick start
 
-
-- Use `bin/unpack.sh` to prep a cia file.
-- Use `bin/crowd.sh` to extract excel editable game data
+- `make help` usually has the most current instructions
 
 ## Arcanist (Forked from bravely crowd)
 
