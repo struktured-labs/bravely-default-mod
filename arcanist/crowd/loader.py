@@ -8,18 +8,10 @@ from dataclasses import dataclass
 from dataclasses import field
 import yaml
 
-# Design idea:
-# Most functions return a dataframe.
-# User can load a file to make a dateframe
-# User can edit the dataframe, and save it back to a file.
-# Perhaps high level functions can be used to load a file, edit it, and save it back
-# Consider a data file to reprsent edits (e.g. a file with columns like "file", "row", "col", "value")
-
 type CrowdData = dict[str, dict[str, pd.DataFrame]]
 
-
 CROWD_FILE_NAME = "crowd.xls"
-
+DEFAULT_ROOT_DIR = "../build/crowd-dev-unpacked"
 
 def _truncated_path(path: str | Path) -> str:
 
@@ -152,7 +144,7 @@ class CrowdSchemaOverrides:
         return CrowdSchemaOverrides.Builder(path)
    
     @staticmethod
-    def save(overrides: Iterable['CrowdSchemaOverrides'], root_dir: str | Path = ".", file_name: str | Path = "crowd_overrides.yaml"):
+    def save(overrides: Iterable['CrowdSchemaOverrides'], root_dir: str | Path = ".", file_name: str | Path = "crowd_overrides.yaml") -> Path:
         """Save the crowd schema overrides to a file.
 
         Args:
@@ -163,9 +155,10 @@ class CrowdSchemaOverrides:
         with open(file_path, "w") as f:
             ser = yaml.dump(overrides)
             f.write(ser)
+        return file_path
 
     @staticmethod
-    def load(file_or_dir: str | Path = ".", file_name: str | Path = "crowd_overrides.yaml") -> Iterable['CrowdSchemaOverrides']:
+    def load(file_or_dir: str | Path = DEFAULT_ROOT_DIR, *, file_name: str | Path = "crowd_overrides.yaml") -> Iterable['CrowdSchemaOverrides']:
         """Load crowd schema overrides from a file.
 
         Args:
@@ -258,7 +251,7 @@ def annotate(
     return crowd_data
 
 
-def save(crowd_data: CrowdData, root_dir: str|Path = "."):
+def save(crowd_data: CrowdData, root_dir: str|Path = DEFAULT_ROOT_DIR):
     """Save the crowd data to Excel files.
 
     Args:
