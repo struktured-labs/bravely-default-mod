@@ -9,7 +9,7 @@ import hashlib
 import logging
 import hjson
 from io import BytesIO
-
+from pathlib import Path
 # import pudb; pu.db
 
 
@@ -186,7 +186,7 @@ class DATAFILE(FILE):
 
 
 class CROWDFILES:
-    def __init__(self, root, crowds, specs, sheetToFile):
+    def __init__(self, root:str|Path, crowds, specs, sheetToFile):
         self.root = root
         self.specs = specs
         self.fileList = crowds[root]
@@ -247,6 +247,7 @@ class CROWDFILES:
         fileName = os.path.join(self.root, fileName)
         if os.path.isfile(fileName):
             self.spreadsheet = xlrd.open_workbook(fileName)
+
             for sheet in self.spreadsheet.sheets():
                 sheetName = os.path.join(self.root, self.sheetToFile[sheet.name])
                 if ".fscache" in sheetName:

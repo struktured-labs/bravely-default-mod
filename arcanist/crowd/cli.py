@@ -230,6 +230,7 @@ def pack(settings: dict[str, str]) -> tuple[bool, Exception | None]:
     try:
         PACK(settings)
     except (Exception,) as e:
+        logging.exception("Pack error.")
         return False, e
     return True, None
 

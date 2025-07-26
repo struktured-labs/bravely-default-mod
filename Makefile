@@ -24,7 +24,7 @@ help:
 	@echo "    Unpacks bravely crowd data."
 	@echo make crowd-pack
 	@echo "    Packs bravely crowd data."
-	@echo make deploy
+	@echo make deploy-code
 	@echo "    Deploy bravely code and crowd data (to citra by default)."
 
 
@@ -45,5 +45,11 @@ crowd-unpack:
 crowd-pack:
 	$(conda_cmd) run -n $(env_name) bin/crowd.sh -r $(build_dir)/crowd-$(qualifier)-unpacked -o $(build_dir)/crowd-$(qualifier)-packed -g $(game) pack
 
-deploy:
-	QUALIFIER=${qualifier} BUILD_DIR=${build_dir} bin/deploy.sh 
+deploy-code:
+	QUALIFIER=${qualifier} BUILD_DIR=${build_dir} bin/deploy_code.sh 
+
+deploy-romfs:
+	QUALIFIER=${qualifier} BUILD_DIR=${build_dir} bin/deploy_romfs.sh
+
+clean:
+	rm -rf build

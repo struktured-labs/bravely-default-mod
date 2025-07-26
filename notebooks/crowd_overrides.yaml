@@ -1,0 +1,10 @@
+- !!python/object:arcanist.crowd.loader.CrowdSchemaOverrides
+  path: Common_en/Battle
+  schemas:
+  - !!python/object:arcanist.crowd.loader.CrowdSchema
+    columns:
+      0: AttackPercent
+    index:
+      0: MaxPercent
+      1: MinPercent
+    sheet: BuffLimit.btb

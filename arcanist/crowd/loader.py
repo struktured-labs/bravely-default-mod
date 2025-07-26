@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 from typing import Mapping, Sequence
 from collections.abc import Iterable
-from functools import lru_cache
 from pathlib import Path
 from dataclasses import dataclass
 from dataclasses import field
@@ -22,8 +21,7 @@ def _truncated_path(path: str | Path) -> str:
     return "/".join(parts)  # Join them with a slash
 
 
-@lru_cache
-def _load_all(file: str) -> CrowdData:
+def _load_all(file: str|Path) -> CrowdData:
     match pd.read_excel(file, sheet_name=None):  # type: ignore
         case dict() as sheets:
             return {_truncated_path(file): sheets}
@@ -62,44 +60,47 @@ def _maybe_load_all(file_or_df: str | Path | CrowdData) -> CrowdData:
             raise ValueError(f"Unexpected input: {file_or_df}")
 
 
-def load(file_or_dir: str | Path, pat: str | None = None) -> CrowdData:
+def load(file_or_dir: str | Path |CrowdData, pat: str | None = None) -> CrowdData:
     """Load datasets from a file or a dictionary of datasets, filtering by a pattern.
     Args:
-        file (str or CrowdData): The file path or a dictionary of datasets.
+        file (str | Path | CrowdData): The file path or a dictionary of datasets.
         pat (str): The pattern to filter datasets by.
     Returns:
         CrowdData: A dictionary of datasets that match the pattern.
     """
 
     if pat is None:
-
         def predicate(txt: str) -> bool:
             del txt
             return True
-
     else:
-
         def predicate(txt: str) -> bool:
             return pat.lower() in txt.lower()
 
-    ds = _maybe_load_all(file_or_dir)
-    datasets: CrowdData = {}
-    for key in ds.keys():
-        dss = ds[key]
-        if predicate(key):
-            datasets[key] = dss
+    ds0 = _maybe_load_all(file_or_dir)
+    datasets0: CrowdData = {}
+    for key0, ds in ds0.items():
+        datasets0[key0] = datasets = {}
+        if predicate(key0):
+            datasets0[key0] = ds
             continue
-        col_names: Iterable[str] = dss.keys()  # type: ignore
-        for col in col_names:  # type: ignore
-            assert isinstance(
-                col, str
-            ), f"Column name {col} in dataset {key} is not a string."
-            print(f"check col {key}/{col}")
-            if predicate(col) or (dss[col].dtype.kind in ["S", "U"] and np.any(dss[col].str.contains(text))):  # type: ignore
+        for key in ds.keys():
+            dss = ds[key]
+            if predicate(key):
                 datasets[key] = dss
-                break
-
-    return datasets
+                continue
+            col_names: Iterable[str] = dss.keys()  # type: ignore
+            for col in col_names:  # type: ignore
+                assert isinstance(
+                    col, str
+                ), f"Column name {col} in dataset {key} is not a string."
+                print(f"check col {key}/{col}")
+                if predicate(col) or (dss[col].dtype.kind in ["S", "U"] and np.any(dss[col].str.contains(text))):  # type: ignore
+                    datasets[key] = dss
+                    break
+        if not datasets0[key0]:
+            del datasets0[key0] 
+    return datasets0
 
 
 @dataclass(frozen=True)
@@ -110,8 +111,7 @@ class CrowdSchema:
 
 
 
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=True)
 class CrowdSchemaOverrides:
     path: str
     schemas: Sequence[CrowdSchema] = field(default_factory=lambda: list[CrowdSchema]())
@@ -144,7 +144,7 @@ class CrowdSchemaOverrides:
         return CrowdSchemaOverrides.Builder(path)
    
     @staticmethod
-    def save(overrides: Iterable['CrowdSchemaOverrides'], root_dir: str | Path = ".", file_name: str | Path = "crowd_overrides.yaml") -> Path:
+    def save(overrides: Iterable['CrowdSchemaOverrides'], root_dir: str | Path = DEFAULT_ROOT_DIR, file_name: str | Path = "crowd_overrides.yaml") -> Path:
         """Save the crowd schema overrides to a file.
 
         Args:
@@ -179,13 +179,10 @@ def annotate(
     *,
     overrides: Iterable[CrowdSchemaOverrides]|CrowdSchemaOverrides = (),
     allow_unknown: bool = False,
+    pat: str | None = None,
 ) -> CrowdData:
 
-    match crowd_data:
-        case dict():
-            pass
-        case str() | Path() as file:
-            crowd_data = load(file)
+    crowd_data = load(crowd_data, pat)
 
     match overrides:
         case CrowdSchemaOverrides() as override:
@@ -220,8 +217,11 @@ def annotate(
                             )
 
                     col = df.columns[idx]
-                    df.rename(columns={col: new_col}, inplace=True)
-                    print(f"Renamed column {col} to {new_col} in sheet {sheet}.")
+                    if col != new_col:
+                        df.rename(columns={col: new_col}, inplace=True)
+                        print(f"Renamed column {col} to {new_col} in sheet {sheet}.")
+                    else:
+                        print(f"Column {col} already has the name {new_col}, skipping rename.")
 
                 indices = np.arange(len(df)).astype(str)
                 if len(schema.index) > 0:
@@ -239,7 +239,9 @@ def annotate(
                         print(
                             f"Renamed index {df.index[idx]} to {new_row} in dataset {sheet}."
                         )
-                    df.index = indices  # type: ignore
+
+                    if not np.all(indices == np.array(df.index).astype(str)):
+                        df.index = indices  # type: ignore
                     df.rename(
                         index={
                             df.index[idx]: new_row
@@ -251,6 +253,7 @@ def annotate(
     return crowd_data
 
 
+
 def save(crowd_data: CrowdData, root_dir: str|Path = DEFAULT_ROOT_DIR):
     """Save the crowd data to Excel files.
 
@@ -258,11 +261,12 @@ def save(crowd_data: CrowdData, root_dir: str|Path = DEFAULT_ROOT_DIR):
         crowd_data (CrowdData): The crowd data to save.
         root_dir (str | Path): The directory where the files will be saved.
     """
+    root_dir = Path(root_dir) / "cxi" / "romfs_dir"
     for path, sheets in crowd_data.items():
         prefix=Path(root_dir) / Path(path) 
         prefix.mkdir(parents=True, exist_ok=True)
         file_path = prefix / CROWD_FILE_NAME
-        with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
+        with pd.ExcelWriter(file_path) as writer:
             for sheet_name, df in sheets.items():
                 df.to_excel(writer, sheet_name=sheet_name, index=True) #type: ignore
         print(f"Saved crowd data to {file_path}")
