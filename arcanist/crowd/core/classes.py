@@ -10,12 +10,22 @@ import logging
 import hjson
 from io import BytesIO
 from pathlib import Path
+import pandas as pd
+from typing import Mapping
 # import pudb; pu.db
+from collections.abc import Buffer
+from dataclasses import dataclass
 
-
+@dataclass(frozen=True, init=True)
+class Sheet:
+    name:str
+    nrows:int
+    ncols:int
+    data: pd.DataFrame
+ 
 class FILE:
-    def __init__(self, data):
-        self.fileSize = len(data)
+    def __init__(self, data: Buffer):
+        self.fileSize = len(data) #type:ignore
         self.data = BytesIO(data)
 
     def getData(self):
@@ -33,11 +43,11 @@ class FILE:
         string = bytearray()
         while True:
             string += self.data.read(2)
-            if string[-2:] == b"\x00\x00":
+            if bytes(string[-2:]) == b"\x00\x00":
                 break
         return string.decode("utf-16")[:-1]
 
-    def readString(self, size):
+    def readString(self, size:int):
         string = self.data.read(size)
         return string.decode("utf-8")
 
@@ -186,7 +196,7 @@ class DATAFILE(FILE):
 
 
 class CROWDFILES:
-    def __init__(self, root:str|Path, crowds, specs, sheetToFile):
+    def __init__(self, root:str|Path, crowds, specs, sheetToFile: Mapping[str, str|Path]):
         self.root = root
         self.specs = specs
         self.fileList = crowds[root]
@@ -241,22 +251,34 @@ class CROWDFILES:
                 logger.info(f"Missing {fileName}!")
                 return False
         return True
-
+    
     def _loadSheet(self, fileName: str):
         self.data = {}
         fileName = os.path.join(self.root, fileName)
-        if os.path.isfile(fileName):
-            self.spreadsheet = xlrd.open_workbook(fileName)
+        match (suffix := Path(fileName).suffix.lower()):
+            case ".xlsx"|"xls":
+                self.spreadsheet = xlrd.open_workbook(fileName)
+                sheets = self.spreadsheet.sheets()
 
-            for sheet in self.spreadsheet.sheets():
-                sheetName = os.path.join(self.root, self.sheetToFile[sheet.name])
-                if ".fscache" in sheetName:
-                    self.data[sheetName] = b""
-                else:
-                    self.data[sheetName] = self.getDataFromSheet(sheet, sheetName)
-                    self.getHeadersFromSheet(sheet, sheetName)
-                # sha = hashlib.sha1(self.data[sheetName]).hexdigest()
-                # assert sha == self.specs[sheetName]['sha'], f"{self.root}/{sheet.name}"
+                                   # sha = hashlib.sha1(self.data[sheetName]).hexdigest()
+                    # assert sha == self.specs[sheetName]['sha'], f"{self.root}/{sheet.name}"
+            case ".pq"|".parquet":
+                self.spreedsheet = pd.read_parquet(fileName)
+                sheets = [Sheet(name=name) for name in self.spreadsheet.keys()]
+
+            case _:
+                raise ValueError(f"Unsupported file format: {fileName} ({Path(fileName).suffix})")
+    
+        for sheet in sheets:
+            sheetName = os.path.join(self.root, self.sheetToFile[sheet.name])
+            if ".fscache" in sheetName:
+                self.data[sheetName] = b""
+            else:
+                self.data[sheetName] = self.getDataFromSheet(sheet, sheetName)
+                self.getHeadersFromSheet(sheet, sheetName)
+                
+
+
 
     def _loadTables(self, fileList):
         self.data = {}

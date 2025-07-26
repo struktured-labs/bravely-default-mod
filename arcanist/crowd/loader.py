@@ -6,10 +6,11 @@ from pathlib import Path
 from dataclasses import dataclass
 from dataclasses import field
 import yaml
-
+from typing import Literal 
 type CrowdData = dict[str, dict[str, pd.DataFrame]]
+CrowdDataFormat = Literal['parquet', 'xls']
 
-CROWD_FILE_NAME = "crowd.xls"
+CROWD_FILE_BASE_NAME = "crowd"
 DEFAULT_ROOT_DIR = "../build/crowd-dev-unpacked"
 
 def _truncated_path(path: str | Path) -> str:
@@ -22,21 +23,35 @@ def _truncated_path(path: str | Path) -> str:
 
 
 def _load_all(file: str|Path) -> CrowdData:
-    match pd.read_excel(file, sheet_name=None):  # type: ignore
-        case dict() as sheets:
-            return {_truncated_path(file): sheets}
-        case _:
+
+    match Path(file).suffix.lower():
+        case '.parquet'|'.pq':
+            return {_truncated_path(file): pd.read_parquet(file, engine='fastparquet', index_col=0)}  # type: ignore
+        case '.xls' | '.xlsx':
+            match pd.read_excel(file, sheet_name=None):  # type: ignore
+                case dict() as sheets:
+                    return {_truncated_path(file): sheets}
+                case _:
+                    raise ValueError(
+                        f"File {file} does not contain any sheets or is not a valid vrecrowd excel file."
+                    )
+        case str():
             raise ValueError(
-                f"File {file} does not contain any sheets or is not a valid vrecrowd excel file."
+                f"File {file} is not a valid crowd file. Supported formats are .parquet, .xls, and .xlsx."
             )
 
 
-def _maybe_load_all(file_or_df: str | Path | CrowdData) -> CrowdData:
+def _maybe_load_all(file_or_df: str | Path | CrowdData, fmt:CrowdDataFormat ='parquet') -> CrowdData:
 
     def _load(file: Path) -> CrowdData:
         if file.is_dir():
+            match fmt:
+                case 'parquet':
+                    crowd_suffix = ".parquet"
+                case 'xls':
+                    crowd_suffix = ".xls" 
             # Recursively load all crowd files in the directory
-            crowd_files = list(file.glob(f"**/{CROWD_FILE_NAME}"))
+            crowd_files = list(file.glob(f"**/{Path(CROWD_FILE_BASE_NAME).with_suffix(crowd_suffix)}"))
             if not crowd_files:
                 raise ValueError(f"No crowd.xls file found in directory {file}.")
             result: CrowdData = {}
@@ -254,7 +269,8 @@ def annotate(
 
 
 
-def save(crowd_data: CrowdData, root_dir: str|Path = DEFAULT_ROOT_DIR):
+
+def save(crowd_data: CrowdData, *, root_dir: str|Path = DEFAULT_ROOT_DIR, fmt: CrowdDataFormat='parquet'):
     """Save the crowd data to Excel files.
 
     Args:
@@ -265,8 +281,14 @@ def save(crowd_data: CrowdData, root_dir: str|Path = DEFAULT_ROOT_DIR):
     for path, sheets in crowd_data.items():
         prefix=Path(root_dir) / Path(path) 
         prefix.mkdir(parents=True, exist_ok=True)
-        file_path = prefix / CROWD_FILE_NAME
-        with pd.ExcelWriter(file_path) as writer:
-            for sheet_name, df in sheets.items():
-                df.to_excel(writer, sheet_name=sheet_name, index=True) #type: ignore
-        print(f"Saved crowd data to {file_path}")
+        match fmt:
+            case 'parquet':
+                for sheet_name, df in sheets.items():
+                    df.to_parquet(prefix / f"{sheet_name}.parquet", engine='fastparquet', index=True)
+                    print(f"Saved crowd data to {prefix / f'{sheet_name}.parquet'}")
+            case 'xls':
+                file_path = prefix / Path(CROWD_FILE_BASE_NAME).with_suffix('.xls')
+                with pd.ExcelWriter(file_path) as writer:
+                    for sheet_name, df in sheets.items():
+                        df.to_excel(writer, sheet_name=sheet_name, index=True) #type: ignore
+                print(f"Saved crowd data to {file_path}")

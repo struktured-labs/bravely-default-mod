@@ -149,4 +149,7 @@ dependencies:
   - black
   - pytest
   - openpyxl
+  - nested-pandas
+  - fastparquet
+  - pyarrow
 prefix: "/home/struktured/micromamba/envs/bd-dev"
