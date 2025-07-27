@@ -11,10 +11,11 @@ import hjson
 from io import BytesIO
 from pathlib import Path
 import pandas as pd
-from typing import Mapping
+from typing import Mapping, Any
 # import pudb; pu.db
 from collections.abc import Buffer
 from dataclasses import dataclass
+import glob
 
 @dataclass(frozen=True, init=True)
 class Sheet:
@@ -22,7 +23,20 @@ class Sheet:
     nrows:int
     ncols:int
     data: pd.DataFrame
- 
+
+    @staticmethod
+    def from_pandas(name:str, data: pd.DataFrame) -> 'Sheet':
+        nrows, ncols = data.shape
+        nrows += 1 # Add row index
+        ncols += 1 # Add column header
+        return Sheet(name=name, nrows=nrows, ncols=ncols, data=data)
+
+    def col_values(i:int) -> Sequence[Any]:
+        return [self.data.columns[i], *list(self.data.iloc[:, i])]
+
+    def row_values(i:int) -> Sequence[Any]:
+        return [self.data.index[i], *list(self.data.iloc[i, :])]
+        
 class FILE:
     def __init__(self, data: Buffer):
         self.fileSize = len(data) #type:ignore
@@ -226,10 +240,10 @@ class CROWDFILES:
             self._moddedFiles: list[str] = []
         return self._moddedFiles
 
-    def loadData(self):
+    def loadData(self, fmt:Literal:['xls', 'parquet'] = 'parquet'):
         # Try spreadsheet first
-        sheetName = os.path.join(self.root, "crowd.xls")
-        self._loadSheet("crowd.xls")
+        sheetName = os.path.join(self.root, file:="crowd.{fmt}")
+        self._loadSheet(file)
         if self.isModified:
             self._moddedFiles.insert(0, sheetName)
             return
@@ -252,19 +266,25 @@ class CROWDFILES:
                 return False
         return True
     
-    def _loadSheet(self, fileName: str):
+    def _loadSheet(self, fileName: str) -> None:
         self.data = {}
         fileName = os.path.join(self.root, fileName)
         match (suffix := Path(fileName).suffix.lower()):
             case ".xlsx"|"xls":
                 self.spreadsheet = xlrd.open_workbook(fileName)
                 sheets = self.spreadsheet.sheets()
-
-                                   # sha = hashlib.sha1(self.data[sheetName]).hexdigest()
-                    # assert sha == self.specs[sheetName]['sha'], f"{self.root}/{sheet.name}"
             case ".pq"|".parquet":
-                self.spreedsheet = pd.read_parquet(fileName)
-                sheets = [Sheet(name=name) for name in self.spreadsheet.keys()]
+
+                sheet_files = glob.glob(Path(fileName) / "*.parquet")
+
+                self.spreadsheet :dict[str, Sheet] = {}
+
+                for sheet_file in sheet_files:
+                    sheet_name = Path(sheet_file).basename.split("_")[0]
+                    data = pd.read_parquet(sheet_file, engine='fastparquet')
+                    sheet = Sheet.from_pandas(name=sheet_name, data=data)
+                    self.spreedsheet[sheet_name] = sheet
+                sheets = self.spreadsheet.values()
 
             case _:
                 raise ValueError(f"Unsupported file format: {fileName} ({Path(fileName).suffix})")
