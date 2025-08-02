@@ -41,22 +41,25 @@ def _load_all(file: str|Path) -> CrowdData:
             )
 
 
-def _maybe_load_all(file_or_df: str | Path | CrowdData, fmt:CrowdDataFormat ='parquet') -> CrowdData:
+def _maybe_load_all(file_or_df: str | Path | CrowdData, fmt:CrowdDataFormat |Sequence[CrowdDataFormat]=['xls', 'parquet']) -> CrowdData:
 
     def _load(file: Path) -> CrowdData:
         if file.is_dir():
-            match fmt:
-                case 'parquet':
-                    crowd_suffix = ".parquet"
-                case 'xls':
-                    crowd_suffix = ".xls" 
-            # Recursively load all crowd files in the directory
-            crowd_files = list(file.glob(f"**/{Path(CROWD_FILE_BASE_NAME).with_suffix(crowd_suffix)}"))
-            if not crowd_files:
-                raise ValueError(f"No crowd.xls file found in directory {file}.")
-            result: CrowdData = {}
-            for crowd_file in crowd_files:
-                result.update(_load_all(crowd_file))
+            fmts :Sequence[CrowdDataFormat] = [fmt] if isinstance(fmt, str) else fmt
+            result : CrowdData = {}
+            for fmt_ in fmts:
+                match fmt_:
+                    case 'parquet':
+                        crowd_suffix = ".parquet"
+                    case 'xls':
+                        crowd_suffix = ".xls" 
+            
+                crowd_base_name = Path(CROWD_FILE_BASE_NAME).with_suffix(crowd_suffix)
+                crowd_files = list(file.glob(f"**/{crowd_base_name}"))
+                for crowd_file in crowd_files:
+                    result.update(_load_all(crowd_file))
+            if not result:
+                    raise ValueError(f"No crowd files found in directory {file}.")
             return result
         else:
             if not file.is_file():
@@ -283,8 +286,10 @@ def save(crowd_data: CrowdData, *, root_dir: str|Path = DEFAULT_ROOT_DIR, fmt: C
         prefix.mkdir(parents=True, exist_ok=True)
         match fmt:
             case 'parquet':
+                file_path : Path = prefix / Path(CROWD_FILE_BASE_NAME).with_suffix('.parquet')
+                file_path.mkdir(parents=True, exist_ok=True)
                 for sheet_name, df in sheets.items():
-                    df.to_parquet(prefix / f"{sheet_name}.parquet", engine='fastparquet', index=True)
+                    df.to_parquet(file_path / f"{sheet_name}.parquet", engine='fastparquet', index=False)
                     print(f"Saved crowd data to {prefix / f'{sheet_name}.parquet'}")
             case 'xls':
                 file_path = prefix / Path(CROWD_FILE_BASE_NAME).with_suffix('.xls')

@@ -25,9 +25,9 @@ help:
 	@echo make crowd-pack
 	@echo "    Packs bravely crowd data."
 	@echo make deploy-code
-	@echo "    Deploy bravely code and crowd data (to citra by default)."
-
-
+	@echo "    Deploy bravely code and (to citra by default)."
+	@echo make deploy-romfs
+	@echo "    Deploy bravely romfs dir and crowd data (to citra by default)."
 
 
 cia-unpack:

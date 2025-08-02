@@ -11,11 +11,16 @@ import hjson
 from io import BytesIO
 from pathlib import Path
 import pandas as pd
-from typing import Mapping, Any
+from typing import Mapping, Any, Literal
 # import pudb; pu.db
 from collections.abc import Buffer
 from dataclasses import dataclass
 import glob
+from typing import Sequence
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, init=True)
 class Sheet:
@@ -28,15 +33,20 @@ class Sheet:
     def from_pandas(name:str, data: pd.DataFrame) -> 'Sheet':
         nrows, ncols = data.shape
         nrows += 1 # Add row index
-        ncols += 1 # Add column header
+#        ncols += 1 # Add column header
+        logger.info(f"Creating Sheet: {name} with {nrows} rows and {ncols} columns")
         return Sheet(name=name, nrows=nrows, ncols=ncols, data=data)
 
-    def col_values(i:int) -> Sequence[Any]:
-        return [self.data.columns[i], *list(self.data.iloc[:, i])]
+    def col_values(self, i: int) -> Sequence[Any]:
+        res = [self.data.columns[i], *list(self.data.iloc[:, i])]
+        logger.info(f"col_values[{i}]={res}")
+        return res
 
-    def row_values(i:int) -> Sequence[Any]:
-        return [self.data.index[i], *list(self.data.iloc[i, :])]
-        
+    def row_values(self, i: int) -> Sequence[Any]:
+        res = [self.data.index[i], *list(self.data.iloc[i, :])]
+        logger.info(f"row_values[{i}]={res}")
+        return res
+
 class FILE:
     def __init__(self, data: Buffer):
         self.fileSize = len(data) #type:ignore
@@ -92,7 +102,7 @@ class FILE:
 
 # FILE object + access to reading and patching as if a spreadsheet
 class DATAFILE(FILE):
-    def __init__(self, fileName, data):
+    def __init__(self, fileName: str|Path, data):
         inflated = self.decompress(data)
         self.sha = hashlib.sha1(inflated).hexdigest()
         super().__init__(inflated)
@@ -213,12 +223,12 @@ class CROWDFILES:
     def __init__(self, root:str|Path, crowds, specs, sheetToFile: Mapping[str, str|Path]):
         self.root = root
         self.specs = specs
-        self.fileList = crowds[root]
+        self.fileList : Sequence[str|Path] = crowds[root]
         self.sheetToFile = sheetToFile
         self.data = {}
         self._isModified = False
         self._moddedFiles = []
-        self.allHeaders = {}
+        self.allHeaders : dict[str, Any] = {}
 
     # Checks if any file in the crowd is modified
     @property
@@ -240,9 +250,9 @@ class CROWDFILES:
             self._moddedFiles: list[str] = []
         return self._moddedFiles
 
-    def loadData(self, fmt:Literal:['xls', 'parquet'] = 'parquet'):
+    def loadData(self, fmt:Literal['xls', 'parquet'] = 'parquet'):
         # Try spreadsheet first
-        sheetName = os.path.join(self.root, file:="crowd.{fmt}")
+        sheetName = os.path.join(self.root, file:=f"crowd.{fmt}")
         self._loadSheet(file)
         if self.isModified:
             self._moddedFiles.insert(0, sheetName)
@@ -258,7 +268,6 @@ class CROWDFILES:
     def allFilesExist(self, fileList: list[str] | None = None) -> bool:
         if fileList is None:
             fileList = self.fileList
-        logger = logging.getLogger()
         for fileName in fileList or []:
             fileName = os.path.join(self.root, fileName)
             if not os.path.isfile(fileName):
@@ -269,21 +278,22 @@ class CROWDFILES:
     def _loadSheet(self, fileName: str) -> None:
         self.data = {}
         fileName = os.path.join(self.root, fileName)
+        logger.info(f"Loading spreadsheet {fileName}...")
         match (suffix := Path(fileName).suffix.lower()):
             case ".xlsx"|"xls":
                 self.spreadsheet = xlrd.open_workbook(fileName)
                 sheets = self.spreadsheet.sheets()
             case ".pq"|".parquet":
 
-                sheet_files = glob.glob(Path(fileName) / "*.parquet")
+                sheet_files = glob.glob(str(Path(fileName) / "*.parquet"))
 
                 self.spreadsheet :dict[str, Sheet] = {}
 
                 for sheet_file in sheet_files:
-                    sheet_name = Path(sheet_file).basename.split("_")[0]
+                    sheet_name = Path(sheet_file).with_suffix("").name
                     data = pd.read_parquet(sheet_file, engine='fastparquet')
                     sheet = Sheet.from_pandas(name=sheet_name, data=data)
-                    self.spreedsheet[sheet_name] = sheet
+                    self.spreadsheet[sheet_name] = sheet
                 sheets = self.spreadsheet.values()
 
             case _:
@@ -324,7 +334,7 @@ class CROWDFILES:
         with open(fileCrowd, "wb") as file:
             file.write(crowd)
 
-    def dumpHeaders(self, pathOut):
+    def dumpHeaders(self, pathOut: str|Path):
         for f, h in self.allHeaders.items():
             filename = os.path.join(pathOut, f)
             dirname = os.path.dirname(filename)
@@ -395,11 +405,11 @@ class CROWDFILES:
         name_json = os.path.splitext(name)[0] + ".hjson"
         self.allHeaders[name_json] = headersData
 
-    def getDataFromSheet(self, sheet, name):
+    def getDataFromSheet(self, sheet : Sheet, name: str):
         if ".fscache" in name:
             return b""
         # assert self.specs[name]['nrows'] == sheet.nrows, "Missing or added row(s)!"
-        assert self.specs[name]["ncols"] >= sheet.ncols, "Missing column(s)!"
+        assert (spec_cols := self.specs[name]["ncols"]) >= sheet.ncols, ("Missing column(s)!", spec_cols, sheet)
         nrows = sheet.nrows - 1
         ncols = self.specs[name]["ncols"]
         assert self.specs[name]["spreadsheet"]
