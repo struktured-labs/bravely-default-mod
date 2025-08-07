@@ -17,10 +17,27 @@ from collections.abc import Buffer
 from dataclasses import dataclass
 import glob
 from typing import Sequence
-
+import numpy as np
 import logging
 
 logger = logging.getLogger(__name__)
+def _data_conv(x:str|float|int|np.int64|np.int32|np.int8|bytes):
+                    match x:
+                        case str()|bytes() as s:
+                            print("string: ", s, type(s))
+                            return s
+                        case float() as f:
+                            print("float: ", f, type(f))
+                            raise ValueError("STOP")
+                            return int(f)
+                        case int() as i:
+                            return int(i)
+                        case pd.Series() as pd_series: # type: ignore
+                            raise ValueError("pd.Series should not be passed to _data_conv: " + str(pd_series))
+                        case _ as np_value:
+                            logger.info(f"Converting value of type {type(np_value)} to int: {np_value}")
+                            return int(np_value)
+
 
 @dataclass(frozen=True, init=True)
 class Sheet:
@@ -38,12 +55,18 @@ class Sheet:
         return Sheet(name=name, nrows=nrows, ncols=ncols, data=data)
 
     def col_values(self, i: int) -> Sequence[Any]:
-        res = [self.data.columns[i], *list(self.data.iloc[:, i])]
+        res : Sequence[Any] = [self.data.columns[i], *list(map(_data_conv, self.data.iloc[:, i]))] # type: ignore
         logger.info(f"col_values[{i}]={res}")
         return res
 
     def row_values(self, i: int) -> Sequence[Any]:
-        res = [self.data.index[i], *list(self.data.iloc[i, :])]
+
+        match i:
+            case 0:
+                return self.data.columns.tolist()
+            case _:
+                res = list(map(_data_conv, self.data.iloc[i-1, :])) # type: ignore
+        #res = [*list(self.data.iloc[i, :])]
         logger.info(f"row_values[{i}]={res}")
         return res
 
@@ -220,9 +243,9 @@ class DATAFILE(FILE):
 
 
 class CROWDFILES:
-    def __init__(self, root:str|Path, crowds, specs, sheetToFile: Mapping[str, str|Path]):
+    def __init__(self, root:str|Path, crowds : Mapping[str|Path, Sequence[str|Path]], specs:dict[str,Any], sheetToFile: Mapping[str, str|Path]):
         self.root = root
-        self.specs = specs
+        self.specs: dict[str,Any]= specs
         self.fileList : Sequence[str|Path] = crowds[root]
         self.sheetToFile = sheetToFile
         self.data = {}
@@ -297,7 +320,7 @@ class CROWDFILES:
                 sheets = self.spreadsheet.values()
 
             case _:
-                raise ValueError(f"Unsupported file format: {fileName} ({Path(fileName).suffix})")
+                raise ValueError(f"Unsupported file format: {fileName} ({suffix})")
     
         for sheet in sheets:
             sheetName = os.path.join(self.root, self.sheetToFile[sheet.name])
@@ -385,11 +408,13 @@ class CROWDFILES:
         crowd = self._adjustSize(crowd)
         return index, crowd
 
-    def toBytes(self, i):
+    def toBytes(self, i:int):
         return i.to_bytes(4, byteorder="little", signed=True)
 
     def getHeadersFromSheet(self, sheet, name):
+        logger.info("Get headers")
         headers = sheet.row_values(0)
+        logger.info(f"Headers are:{headers}")
         headersData = {}
         v = [ord("A") - 1] * 3
         for h in headers:
@@ -411,12 +436,12 @@ class CROWDFILES:
         # assert self.specs[name]['nrows'] == sheet.nrows, "Missing or added row(s)!"
         assert (spec_cols := self.specs[name]["ncols"]) >= sheet.ncols, ("Missing column(s)!", spec_cols, sheet)
         nrows = sheet.nrows - 1
-        ncols = self.specs[name]["ncols"]
+        ncols :int = self.specs[name]["ncols"]
         assert self.specs[name]["spreadsheet"]
         textCols = self.specs[name]["textColumns"]
         nTextCols = len(textCols)
-        comCols = self.specs[name]["commandColumns"]
-        nComCols = len(comCols)
+        comCols : Sequence[Any] = self.specs[name]["commandColumns"]
+        nComCols : int = len(comCols)
         # Sort columns by commands, text, and data
         columns = []
         for i in range(ncols):
@@ -473,7 +498,8 @@ class CROWDFILES:
                     x += lj[i]
             return x
 
-        def getByteArrayInt(lst):
+        def getByteArrayInt(lst: list[Any]) -> bytearray:
+            logger.info(f"getByteArrayInt({lst}) nrows={nrows}")
             x = bytearray()
             for i in range(nrows):
                 for lj in lst:
@@ -534,7 +560,7 @@ class TABLEFILE(CROWDFILES):
     def loadData(self):
         assert not self.data, "DATA ALREADY LOADED!"
         _, ext = os.path.splitext(self.fileName)
-        if ext == ".xls":
+        if ext in {".xls", 'xlsx', '.parquet', '.pq'}:
             self._loadSheet(self.fileName)
         else:
             self._loadTables([self.fileName])

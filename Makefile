@@ -6,7 +6,11 @@ cia_file ?= cias/bd.cia
 conda_cmd ?= micromamba
 pip_cmd ?= pip
 env_name ?= "bd-dev"
-game ?= "BD"
+game ?= BD
+
+user ?= carm
+
+citra_dir ?= /data/citra/citra-emu
 
 help:
 	@echo
@@ -46,10 +50,10 @@ crowd-pack:
 	$(conda_cmd) run -n $(env_name) bin/crowd.sh -r $(build_dir)/crowd-$(qualifier)-unpacked -o $(build_dir)/crowd-$(qualifier)-packed -g $(game) pack
 
 deploy-code:
-	QUALIFIER=${qualifier} BUILD_DIR=${build_dir} bin/deploy_code.sh 
+	QUALIFIER=${qualifier} USER=${user} BUILD_DIR=${build_dir} CITRA_DIR=${citra_dir} bin/deploy_code.sh 
 
 deploy-romfs:
-	QUALIFIER=${qualifier} BUILD_DIR=${build_dir} bin/deploy_romfs.sh
+	QUALIFIER=${qualifier} USER=${user} BUILD_DIR=${build_dir} CITRA_DIR=${citra_dir} bin/deploy_romfs.sh
 
 clean:
 	rm -rf build

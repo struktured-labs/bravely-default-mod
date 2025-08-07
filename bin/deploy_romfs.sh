@@ -2,11 +2,11 @@
 
 set -ex
 
-QUALIFIER=${QUALIFIER:-"dev"}
-ROMFS_DIR=${ROMFS_DIR:-"build/crowd-${QUALIFIER}-packed/cxi/romfs_dir"}
-CITRA_DIR=${CITRA_DIR:=$HOME/.local/share/citra-emu}
-BACKUP=`date +%Y%m%d_%H%M%S`
 VERSION=${VERSION:-"00040000000FC500"}
+QUALIFIER=${QUALIFIER:-"dev"}
+ROMFS_DIR=${ROMFS_DIR:-"build/crowd-${QUALIFIER}-packed/${VERSION}/romfs"}
+CITRA_DIR=${CITRA_DIR:=/home/$USER/.local/share/citra-emu}
+BACKUP=`date +%Y%m%d_%H%M%S`
 
 BACKUP_DIR=${BACKUP_DIR:-"build/$QUALIFIER/backup"}
 
@@ -21,11 +21,13 @@ if [[ -z "$FROM" ]]; then
 else
   echo Using given from $FROM
 fi
-mkdir -p $TO
 
+set +e
+mkdir -p $TO
+set -e
 echo "Backing up original romfs"
 cp -r -v $TO $BACKUP_DIR/romfs_dir.$BACKUP.bak
 
 
 echo "Deploying new romfs"
-cp -r -v $FROM/* $TO
+cp -r -v $FROM/cxi/romfs_dir/* $TO

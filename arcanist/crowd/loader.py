@@ -26,7 +26,7 @@ def _load_all(file: str|Path) -> CrowdData:
 
     match Path(file).suffix.lower():
         case '.parquet'|'.pq':
-            return {_truncated_path(file): pd.read_parquet(file, engine='fastparquet', index_col=0)}  # type: ignore
+            return {_truncated_path(file): pd.read_parquet(file, engine='fastparquet')}  # type: ignore
         case '.xls' | '.xlsx':
             match pd.read_excel(file, sheet_name=None):  # type: ignore
                 case dict() as sheets:
@@ -41,7 +41,7 @@ def _load_all(file: str|Path) -> CrowdData:
             )
 
 
-def _maybe_load_all(file_or_df: str | Path | CrowdData, fmt:CrowdDataFormat |Sequence[CrowdDataFormat]=['xls', 'parquet']) -> CrowdData:
+def _maybe_load_all(file_or_df: str | Path | CrowdData, fmt:CrowdDataFormat |Sequence[CrowdDataFormat]=['xls']) -> CrowdData:
 
     def _load(file: Path) -> CrowdData:
         if file.is_dir():
