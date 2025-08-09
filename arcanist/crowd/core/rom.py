@@ -86,13 +86,15 @@ class PACK:
                 if "index.fs" in bytefiles:
                     bytefiles.remove("index.fs")
                 bytefiles = list(filter(lambda x: x not in crowdFiles[root], bytefiles))
+            else:
+                pass
 
             for sheet in spreadsheets:
                 logger.info(f"Loading spreadsheet {sheet} in {root}")
                 fname = os.path.join(root, sheet)
                 try:
                     table = TABLEFILE(root, sheet, crowdSpecs, sheetNames)
-                    table.loadData()
+                    table.loadData(fmt=fmt)
                     if table.isModified:
                         table.dump(self.pathOut)
                         moddedFiles.append([fname])

@@ -54,7 +54,7 @@ class Sheet:
 
     def col_values(self, i: int) -> Sequence[Any]:
         res : Sequence[Any] = [self.data.columns[i], *list(map(_data_conv, self.data.iloc[:, i]))] # type: ignore
-        logger.info(f"col_values[{i}]={res}")
+        #logger.info(f"col_values[{i}]={res}")
         return res
 
     def row_values(self, i: int) -> Sequence[Any]:
@@ -65,7 +65,7 @@ class Sheet:
             case _:
                 res = list(map(_data_conv, self.data.iloc[i-1, :])) # type: ignore
         #res = [*list(self.data.iloc[i, :])]
-        logger.info(f"row_values[{i}]={res}")
+        #logger.info(f"row_values[{i}]={res}")
         return res
 
     def write(self, row: int, col: int, value: Any) -> None:
@@ -309,6 +309,11 @@ class CROWDFILES:
     def _loadSheet(self, fileName: str|Path) -> None:
         self.data : dict[str, Any] = {}
         fileName = os.path.join(self.root, fileName)
+
+        if not os.path.isfile(fileName):
+            logger.info(f"No spreadsheet found for {fileName}")
+            return
+
         logger.info(f"Loading spreadsheet {fileName}...")
         sheets : Iterable[Sheet]
 
@@ -510,7 +515,7 @@ class CROWDFILES:
             return x
 
         def getByteArrayInt(lst: list[Any]) -> bytearray:
-            logger.info(f"getByteArrayInt({lst}) nrows={nrows}")
+            #logger.info(f"getByteArrayInt({lst}) nrows={nrows}")
             x = bytearray()
             for i in range(nrows):
                 for lj in lst:
@@ -619,7 +624,7 @@ class CROWD:
             self.crowdData = bytearray(file.read())
 
         # Split crowd files
-        self.crowdFiles: dict[str, Any] = {}
+        self.crowdFiles: dict[str, DATAFILE] = {}
         self.separateCrowd()
         self.dumpSpreadsheet = all(
             [f.dumpSpreadsheet for f in self.crowdFiles.values()]
@@ -714,7 +719,7 @@ class CROWD:
         sheetNames : dict[str, str] = {}
         for file in self.crowdFiles:
             basename = os.path.basename(file)
-            print(f"   building {file}")
+            logger.info(f"   building {file}")
 
             x = basename.replace("_", " ")
             if len(x) > 31:
@@ -813,8 +818,9 @@ class CROWD:
                 for col, v in enumerate(headers.values()): #type:ignore
                     sheet.write(0, col, v)
 
+        logger.info("Saving spreadsheet " + self.sheetName)
         wb.save(self.sheetName) # type: ignore
-        print("   Done!")
+        logger.info("Done saving spreadsheet: " + self.sheetName)
         return sheetNames
 
 
