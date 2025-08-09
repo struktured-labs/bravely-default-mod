@@ -112,7 +112,7 @@ def load(file_or_dir: str | Path |CrowdData, pat: str | None = None) -> CrowdDat
                 assert isinstance(
                     col, str
                 ), f"Column name {col} in dataset {key} is not a string."
-                print(f"check col {key}/{col}")
+                # print(f"check col {key}/{col}")
                 if predicate(col) or (dss[col].dtype.kind in ["S", "U"] and np.any(dss[col].str.contains(text))):  # type: ignore
                     datasets[key] = dss
                     break

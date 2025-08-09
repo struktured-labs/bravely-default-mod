@@ -16,6 +16,7 @@ from typing import Literal
 
 GameType = Literal["BD", "BS"]
 
+logger = logging.getLogger(__name__)
 
 class CliApplication:
     def __init__(self, settings: dict[str, str] | None = None):
@@ -87,7 +88,7 @@ class CliApplication:
                 self.settings["action"] = "pack"
                 self.pack()
             case _:
-                raise ValueError("Invalid action provided")
+                raise ValueError("Invalid action provided: " + args.action)
 
     def getRomPath(self, path: str | None = None):
 
@@ -221,7 +222,7 @@ def unpack(settings: dict[str, str]) -> tuple[bool, Exception | None]:
     try:
         UNPACK(settings)
     except (Exception,) as e:
-        logging.exception("Unpack error")
+        logger.exception("Unpack error")
         return False, e
     return True, None
 
@@ -230,7 +231,7 @@ def pack(settings: dict[str, str]) -> tuple[bool, Exception | None]:
     try:
         PACK(settings)
     except (Exception,) as e:
-        logging.exception("Pack error.")
+        logger.exception("Pack error.")
         return False, e
     return True, None
 

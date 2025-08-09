@@ -6,12 +6,16 @@ import lzma
 import pickle
 import logging
 from .utils import get_filename
+from typing import Literal, Any
+from pathlib import Path
 
+logger = logging.getLogger(__name__)
 
 class PACK:
     def __init__(self, settings: dict[str, str]):
         dir = os.getcwd()
         dirOut = settings.get("output_dir") or f"{os.getcwd()}/romfs_packed"
+        fmt : Literal['xls', 'parquet'] = settings.get("fmt", "xls") # type: ignore
 
         os.makedirs(dirOut, exist_ok=True)
         if settings["game"] == "BD":
@@ -53,29 +57,30 @@ class PACK:
 
         print("CHDIR: " + self.pathIn)
         os.chdir(self.pathIn)
-        moddedFiles: list[str] = []
+        moddedFiles: list[list[str]] = []
         skippedCrowd: list[str] = []
         skippedFiles: list[str] = []
         skippedSheets: list[str] = []
         for root, _, files in os.walk("."):
             root = root[2:]
-            spreadsheets = list(filter(lambda f: ".xls" in f, files))
-            bytefiles = list(filter(lambda f: ".xls" not in f, files))
+            spreadsheets = list(filter(lambda f: f".{fmt}" in f, files))
+            bytefiles = list(filter(lambda f: f".{fmt}" not in f, files))
             bytefiles = list(filter(lambda f: ".xz" not in f, bytefiles))
 
             if root in crowdFiles:
                 crowd = CROWDFILES(root, crowdFiles, crowdSpecs, sheetNames)
                 if not crowd.allFilesExist():
-                    skippedCrowd.append(f"{root}/crowd.xls")
+                    skippedCrowd.append(f"{root}/crowd.{fmt}")
                 else:
-                    crowd.loadData()
+                    crowd.loadData(fmt=fmt)
                     if crowd.isModified:
                         crowd.dump(self.pathOut)
                         moddedFiles.append(crowd.moddedFiles)
                     crowd.dumpHeaders(self.headersOut)
 
-                if "crowd.xls" in spreadsheets:
-                    spreadsheets.remove("crowd.xls")
+                if f"crowd.{fmt}" in spreadsheets:
+                    logger.info(f"Removing crowd.{fmt} from spreadsheets in {root}")
+                    spreadsheets.remove(f"crowd.{fmt}")
                 if "crowd.fs" in bytefiles:
                     bytefiles.remove("crowd.fs")
                 if "index.fs" in bytefiles:
@@ -83,6 +88,7 @@ class PACK:
                 bytefiles = list(filter(lambda x: x not in crowdFiles[root], bytefiles))
 
             for sheet in spreadsheets:
+                logger.info(f"Loading spreadsheet {sheet} in {root}")
                 fname = os.path.join(root, sheet)
                 try:
                     table = TABLEFILE(root, sheet, crowdSpecs, sheetNames)
@@ -158,15 +164,16 @@ class UNPACK:
 
         self.pathIn = settings["rom"]
         self.pathOut = settings.get("output_dir") or f"{os.getcwd()}/romfs_unpacked"
+        self.fmt : Literal['xls', 'parquet'] = settings.get("fmt", "xls")  # type: ignore   
 
-        if os.path.isdir(self.pathOut):
+        if os.path.isdir(self.pathOut)  :
             shutil.rmtree(self.pathOut)
         os.makedirs(self.pathOut)
 
         os.chdir(self.pathIn)
-        crowdSpecs = {}
-        crowdFiles = {}
-        sheetNames = {}
+        crowdSpecs: dict[str, Any] = {}
+        crowdFiles: dict[str, Any] = {}
+        sheetNames: dict[str, Any] = {}
         for root, _, files in os.walk("."):
             root = root[2:]
             for file in files:
@@ -174,14 +181,14 @@ class UNPACK:
                     continue
                 fileName = os.path.join(root, file)
                 if file == "crowd.fs":
-                    table = self.loadCrowd(root)
+                    table = self.loadCrowd(root, fmt=self.fmt)
                     table.dumpFiles(self.pathOut)
                 else:
-                    table = self.loadTable(fileName)
-                print(f"Loaded {fileName}")
+                    table = self.loadTable(fileName, fmt=self.fmt)
+                logger.info(f"Loaded {fileName}")
 
                 if table.dumpSpreadsheet:
-                    print(f"Dumping spreadsheet {fileName}")
+                    logger.info(f"Dumping spreadsheet {fileName}")
                     try:
                         sheetNames.update(table.dumpSheet())
                     except:
@@ -190,7 +197,7 @@ class UNPACK:
 
                 crowdSpecs.update(table.crowdSpecs)
                 if file == "crowd.fs":
-                    baseNames = []
+                    baseNames: list[str] = []
                     for key in table.crowdSpecs:
                         name = os.path.basename(key)
                         baseNames.append(name)
@@ -199,17 +206,18 @@ class UNPACK:
         # Dump data needed for packing
         os.chdir(self.pathOut)
         with lzma.open("do_not_remove.xz", "wb") as file:
-            print("PICKLE1")
+            logger.info(f"pickle crowdSpecs to {file}")
             pickle.dump(crowdSpecs, file)
-            print("PICKLE2")
+            logger.info(f"pickle crowdFiles to {file}")
             pickle.dump(crowdFiles, file)
-            print("PICKLE3")
+            logger.info(f"pickle sheetNames to {file}")
             pickle.dump(sheetNames, file)
-            print("PICKLE DONE")
+            logger.info(f"pickle done for {file}")
 
         os.chdir(dir)
 
-    def loadCrowd(self, path):
+    def loadCrowd(self, path:str|Path, fmt: Literal['xls', 'parquet'] = "xls"):
+        logger.info(f"Loading crowd data from {path} with fmt {fmt}")
         dest = os.path.join(self.pathOut, path)
         if not os.path.isdir(dest):
             os.makedirs(dest)
@@ -217,13 +225,14 @@ class UNPACK:
         shutil.copy(src, dest)
         src = os.path.join(self.pathIn, path, "index.fs")
         shutil.copy(src, dest)
-        return CROWD(dest, self.pathOut, self.headersPath)
+        return CROWD(dest, self.pathOut, self.headersPath, fmt=fmt)
 
-    def loadTable(self, fileName: str):
+    def loadTable(self, fileName: str, fmt: Literal['xls', 'parquet'] = "xls"):
+        logger.info(f"Loading table from {fileName} with fmt {fmt}")
         src = os.path.join(self.pathIn, fileName)
         dest = os.path.join(self.pathOut, fileName)
         base = os.path.dirname(dest)
         if not os.path.isdir(base):
             os.makedirs(base)
         shutil.copy(src, dest)
-        return TABLE(dest, self.pathOut, self.headersPath)
+        return TABLE(dest, self.pathOut, self.headersPath, fmt=fmt)
