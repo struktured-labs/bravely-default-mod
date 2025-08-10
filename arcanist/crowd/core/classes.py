@@ -450,7 +450,9 @@ class CROWDFILES:
         if ".fscache" in name:
             return b""
         # assert self.specs[name]['nrows'] == sheet.nrows, "Missing or added row(s)!"
-        assert (spec_cols := self.specs[name]["ncols"]) >= sheet.ncols, ("Missing column(s)!", spec_cols, sheet)
+        logger.info(f"header {sheet.row_values(0)}")
+        logger.info(f"first row {sheet.row_values(1)}")
+        assert (spec_cols := self.specs[name]["ncols"]) >= sheet.ncols, ("Missing column(s)!", spec_cols, sheet.name, sheet.ncols)
         nrows = sheet.nrows - 1
         ncols :int = self.specs[name]["ncols"]
         assert self.specs[name]["spreadsheet"]

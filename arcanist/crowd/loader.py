@@ -7,6 +7,11 @@ from dataclasses import dataclass
 from dataclasses import field
 import yaml
 from typing import Literal 
+import os
+import logging
+
+logger = logging.getLogger(__name__)
+
 type CrowdData = dict[str, dict[str, pd.DataFrame]]
 CrowdDataFormat = Literal['parquet', 'xls']
 
@@ -195,7 +200,7 @@ class CrowdSchemaOverrides:
 def annotate(
     crowd_data: CrowdData | Path | str,
     *,
-    overrides: Iterable[CrowdSchemaOverrides]|CrowdSchemaOverrides = (),
+    overrides: Iterable[CrowdSchemaOverrides] | CrowdSchemaOverrides = (),
     allow_unknown: bool = False,
     pat: str | None = None,
 ) -> CrowdData:
@@ -290,10 +295,14 @@ def save(crowd_data: CrowdData, *, root_dir: str|Path = DEFAULT_ROOT_DIR, fmt: C
                 file_path.mkdir(parents=True, exist_ok=True)
                 for sheet_name, df in sheets.items():
                     df.to_parquet(file_path / f"{sheet_name}.parquet", engine='fastparquet', index=False)
-                    print(f"Saved crowd data to {prefix / f'{sheet_name}.parquet'}")
+                    logger.info(f"Saved crowd data to {prefix / f'{sheet_name}.parquet'}")
             case 'xls':
-                file_path = prefix / Path(CROWD_FILE_BASE_NAME).with_suffix('.xls')
+                file_path = prefix / Path(CROWD_FILE_BASE_NAME).with_suffix('.xlsx')
                 with pd.ExcelWriter(file_path) as writer:
                     for sheet_name, df in sheets.items():
-                        df.to_excel(writer, sheet_name=sheet_name, index=True) #type: ignore
-                print(f"Saved crowd data to {file_path}")
+                        df.to_excel(writer, sheet_name=sheet_name, index=False) #type: ignore
+                logger.info(f"Saved crowd data to {file_path}")
+                # convert to older excel format
+
+                import subprocess
+                subprocess.run(["soffice", "--headless", "--convert-to", "xls", file_path, "--outdir", prefix], capture_output=True, text=True,check=True)
