@@ -33,11 +33,17 @@ help:
 	@echo make deploy-romfs
 	@echo "    Deploy bravely romfs dir and crowd data (to citra by default)."
 
+ctrtool:
+	git submodule update --init
+	make -C Project_CTR progs
 
-cia-unpack:
+3dstool:
+	git submodule update --init
+	make -C 3dstool install
+
+cia-unpack: ctrtool 3dstool
 	@echo Running unpacking tool.
 	bin/unpack.sh $(cia_file) $(build_dir)/$(qualifier)
-
 
 environment:
 	@$(pip_cmd) install -r requirements.txt --break-system-packages

@@ -1,6 +1,7 @@
 #!/bin/bash
 
-set -euo pipefail
+set -ex
+# pipefail
 
 if [[ $# -ne 2 ]]; then
   echo "Unpacks a bravely default CIA file using both ctrtool and 3dstool into a given output directory."
@@ -8,7 +9,10 @@ if [[ $# -ne 2 ]]; then
   exit 1
 fi
 
-CIA=`realpath $1`
+
+CTR_TOOL=${CRT_TOOL:-"../../Project_CTR/ctrtool/bin/ctrtool"}
+_3DS_TOOL=${_3DS_TOOL:-"../../3dstool/bin/3dstool"}
+CIA=`realpath -q $1`
 
 if [[ ! -f "$CIA" ]]; then
   echo Bravely Default CIA file $CIA not found.
@@ -24,7 +28,7 @@ pushd $OUTDIR
 
 mkdir -p cxi
 echo "[1] Extracting CIA with ctrtool to $QUALIFIER"
-ctrtool --contents="content.0000.cxi" --exefs=cxi/exefs.bin --romfs=cxi/romfs.bin \
+$CTR_TOOL --contents="content.0000.cxi" --exefs=cxi/exefs.bin --romfs=cxi/romfs.bin \
   --exefsdir=cxi/exefs_dir --romfsdir=cxi/romfs_dir --exheader=cxi/exheader.bin $CIA
 
 echo "[2] Extracting CXI contents with 3dstool..."
@@ -32,7 +36,7 @@ mkdir -p "cxi/exefs_dir"
 
 FILE=`ls content*|sort|head -n1`
 echo File is "$FILE" 
-3dstool -x \
+$_3DS_TOOL -x \
   -t cxi \
   --file "$FILE" \
   --header "cxi/header.bin" \
