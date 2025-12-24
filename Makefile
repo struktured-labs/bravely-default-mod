@@ -16,10 +16,17 @@ help:
 	@echo
 	@cat data/bravely-default-cover.ascii
 	@echo "*** Welcome bravely default hacker!! ***"
-	@echo 
+	@echo
 	@echo This is a convenience make command to run various bravely default utilities.
 	@echo ----------------------------------------------------------------------------
 	@echo
+	@echo "SETUP:"
+	@echo make setup
+	@echo "    Initialize git submodules (3dstool and ctrtool)"
+	@echo make pixi-install
+	@echo "    Set up Python environment with pixi (recommended)"
+	@echo
+	@echo "BUILD PIPELINE:"
 	@echo make cia-unpack
 	@echo "    Usage: make cia-unpack cia_file=path-to-mycia.cia build_dir=build qualifier=foobar to extract a cia file to build/foobar"
 	@echo make environment
@@ -28,6 +35,14 @@ help:
 	@echo "    Unpacks bravely crowd data."
 	@echo make crowd-pack
 	@echo "    Packs bravely crowd data."
+	@echo make ghidra-patch
+	@echo "    Apply Ghidra-based patches (999k limit) to code.bin"
+	@echo make save-original
+	@echo "    Save original code.bin before patching (required for patch generation)"
+	@echo make generate-patch
+	@echo "    Generate IPS patch from original and modified code.bin"
+	@echo make apply-patch
+	@echo "    Apply IPS patch to code.bin"
 	@echo make deploy-code
 	@echo "    Deploy bravely code and (to citra by default)."
 	@echo make deploy-romfs
@@ -45,9 +60,22 @@ cia-unpack: ctrtool 3dstool
 	@echo Running unpacking tool.
 	bin/unpack.sh $(cia_file) $(build_dir)/$(qualifier)
 
+setup: ctrtool 3dstool
+	@echo "✅ Git submodules initialized"
+	@echo "Next steps:"
+	@echo "  1. Run 'make environment' to set up conda/micromamba environment"
+	@echo "  2. Or run 'pixi install' to set up pixi environment (recommended)"
+	@echo "  3. Place your Bravely Default CIA file in the cias/ directory"
+	@echo "  4. Run 'make patch-workflow cia_file=cias/yourfile.cia' to generate the patch"
+
 environment:
 	@$(pip_cmd) install -r requirements.txt --break-system-packages
 	@$(conda_cmd) env create -n $(env_name) -f environment.yaml -y
+
+pixi-install:
+	@echo "Setting up pixi environment..."
+	pixi install
+	@echo "✅ Pixi environment ready. Use 'pixi run' to run tasks."
 
 crowd-unpack:
 	$(conda_cmd) run -n $(env_name) bin/crowd.sh -r $(build_dir)/$(qualifier) -o $(build_dir)/crowd-$(qualifier)-unpacked -g $(game) unpack
@@ -61,5 +89,47 @@ deploy-code:
 deploy-romfs:
 	QUALIFIER=${qualifier} USER=${user} BUILD_DIR=${build_dir} CITRA_DIR=${citra_dir} bin/deploy_romfs.sh
 
+save-original:
+	@echo "Saving original code.bin..."
+	@if [ ! -f $(build_dir)/$(qualifier)/cxi/exefs_dir/code.bin.original ]; then \
+		cp $(build_dir)/$(qualifier)/cxi/exefs_dir/code.bin $(build_dir)/$(qualifier)/cxi/exefs_dir/code.bin.original; \
+		echo "✅ Original saved to $(build_dir)/$(qualifier)/cxi/exefs_dir/code.bin.original"; \
+	else \
+		echo "⚠️  Original already exists, skipping"; \
+	fi
+
+ghidra-patch: save-original
+	@echo "Running Ghidra patches..."
+	QUALIFIER=${qualifier} BUILD_DIR=${build_dir} bin/ghidra-patch.sh
+
+ghidra-patch-docker: save-original
+	@echo "Running Ghidra patches in Docker..."
+	docker-compose run --rm ghidra patch
+
+generate-patch:
+	@echo "Generating IPS patch..."
+	python3 scripts/generate_ips_patch.py \
+		--build-dir $(build_dir) \
+		--qualifier $(qualifier) \
+		--output $(build_dir)/patches/bd_999k_limit.ips
+
+apply-patch:
+	@echo "Applying IPS patch..."
+	python3 scripts/apply_ips_patch.py \
+		--build-dir $(build_dir) \
+		--qualifier $(qualifier) \
+		--patch $(build_dir)/patches/bd_999k_limit.ips \
+		--backup
+
+patch-workflow: cia-unpack ghidra-patch generate-patch
+	@echo "✅ Complete patch workflow finished!"
+	@echo "   Patch file: $(build_dir)/patches/bd_999k_limit.ips"
+	@echo "   You can now distribute this .ips file"
+
 clean:
 	rm -rf build
+
+.PHONY: help setup ctrtool 3dstool cia-unpack environment pixi-install \
+	crowd-unpack crowd-pack deploy-code deploy-romfs save-original \
+	ghidra-patch ghidra-patch-docker generate-patch apply-patch \
+	patch-workflow clean

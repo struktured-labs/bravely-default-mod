@@ -11,7 +11,7 @@ fi
 
 
 CTR_TOOL=${CRT_TOOL:-"../../Project_CTR/ctrtool/bin/ctrtool"}
-_3DS_TOOL=${_3DS_TOOL:-"../../3dstool/bin/3dstool"}
+_3DS_TOOL=${_3DS_TOOL:-"../../3dstool/bin/Release/3dstool"}
 CIA=`realpath -q $1`
 
 if [[ ! -f "$CIA" ]]; then
@@ -29,7 +29,7 @@ pushd $OUTDIR
 mkdir -p cxi
 echo "[1] Extracting CIA with ctrtool to $QUALIFIER"
 $CTR_TOOL --contents="content.0000.cxi" --exefs=cxi/exefs.bin --romfs=cxi/romfs.bin \
-  --exefsdir=cxi/exefs_dir --romfsdir=cxi/romfs_dir --exheader=cxi/exheader.bin $CIA
+  --exefsdir=cxi/exefs_dir --romfsdir=cxi/romfs_dir --exheader=cxi/exheader.bin "$CIA"
 
 echo "[2] Extracting CXI contents with 3dstool..."
 mkdir -p "cxi/exefs_dir"

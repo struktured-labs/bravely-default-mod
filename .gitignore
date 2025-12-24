@@ -12,4 +12,38 @@ Bravely*
 romfs*
 citra*
 *.pickle
-cias*
+cias/*
+!cias/.gitkeep
+
+# Python
+*.pyc
+*.pyo
+*.egg-info
+__pycache__/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+.pixi/
+.conda/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build artifacts
+*.ips
+*.3ds
+*.cia
+!build/patches/*.ips
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
