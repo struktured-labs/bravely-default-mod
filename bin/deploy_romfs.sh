@@ -5,7 +5,8 @@ set -ex
 VERSION=${VERSION:-"00040000000FC500"}
 QUALIFIER=${QUALIFIER:-"dev"}
 ROMFS_DIR=${ROMFS_DIR:-"build/crowd-${QUALIFIER}-packed/${VERSION}/romfs"}
-CITRA_DIR=${CITRA_DIR:=/home/$USER/.local/share/citra-emu}
+# Respect provided CITRA_DIR, otherwise default to user's HOME
+CITRA_DIR=${CITRA_DIR:-"$HOME/.local/share/citra-emu"}
 BACKUP=`date +%Y%m%d_%H%M%S`
 
 BACKUP_DIR=${BACKUP_DIR:-"build/$QUALIFIER/backup"}
@@ -26,8 +27,13 @@ set +e
 mkdir -p $TO
 set -e
 echo "Backing up original romfs"
-cp -r -v $TO $BACKUP_DIR/romfs_dir.$BACKUP.bak
+if [ -d "$TO" ]; then
+  cp -r -v "$TO" "$BACKUP_DIR/romfs_dir.$BACKUP.bak"
+else
+  echo "No existing romfs to backup at $TO"
+fi
 
 
 echo "Deploying new romfs"
-cp -r -v $FROM/cxi/romfs_dir/* $TO
+# Pack step outputs directly under .../<TITLEID>/romfs, not cxi/romfs_dir
+cp -r -v "$FROM"/* "$TO"
