@@ -89,6 +89,9 @@ public class Core : MelonMod
             Patches.NativeExpPatch.Apply();
         if (SupportCostModEnabled.Value)
             Patches.NativeSupportCostPatch.Apply();
+        if (BpModEnabled.Value)
+            Patches.NativeBPPatch.Apply();
+        Patches.NativeBuffPatch.Apply();
 
         // Harmony patches (registered but may not intercept on Unity 6 — keeping for future compat)
         _harmony = new HarmonyLib.Harmony("com.struktured.bravelymod");
