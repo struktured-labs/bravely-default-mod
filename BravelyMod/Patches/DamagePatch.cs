@@ -14,7 +14,7 @@ public static class DamagePatch
     [HarmonyPostfix]
     public static void Postfix(Il2Cpp.BtlDamageData pDamageData)
     {
-        if (!Core.DamageCapEnabled) return;
+        if (!Core.DamageCapEnabled.Value) return;
         // BtlDamageData contains the damage value after capping.
         // We'll need to inspect the struct at runtime to find the damage field.
         // For now this is a placeholder — the exact field offset needs runtime testing.

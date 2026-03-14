@@ -85,7 +85,7 @@ public static unsafe class NativeExpPatch
         if (_expCallCount <= 5)
             Melon<Core>.Logger.Msg($"[NATIVE EXP] #{_expCallCount} called! exp={exp} bonus={bonusexp} inst=0x{instance:X}");
 
-        if (Core.ExpBoostEnabled)
+        if (Core.ExpBoostEnabled.Value)
         {
             var mult = Core.ExpMultiplier.Value;
             exp = (int)(exp * mult);
@@ -100,7 +100,7 @@ public static unsafe class NativeExpPatch
 
     private static void ReviseAddJEXP_Hook(nint instance, int jexp, int bonusjexp, nint methodInfo)
     {
-        if (Core.ExpBoostEnabled)
+        if (Core.ExpBoostEnabled.Value)
         {
             var mult = Core.JexpMultiplier.Value;
             jexp = (int)(jexp * mult);

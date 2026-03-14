@@ -1,7 +1,7 @@
 using MelonLoader;
 using HarmonyLib;
 
-[assembly: MelonInfo(typeof(BravelyMod.Core), "BravelyMod", "0.1.0", "struktured")]
+[assembly: MelonInfo(typeof(BravelyMod.Core), "BravelyMod", "0.2.0", "struktured")]
 [assembly: MelonGame("SquareEnix", "BDFFHD")]
 
 namespace BravelyMod;
@@ -10,43 +10,47 @@ public class Core : MelonMod
 {
     public static MelonPreferences_Category Config { get; private set; }
 
-    // Multipliers
+    // === Feature toggles (all persisted to MelonPreferences.cfg) ===
+
+    // EXP/JP/Gold
+    public static MelonPreferences_Entry<bool> ExpBoostEnabled { get; private set; }
     public static MelonPreferences_Entry<float> ExpMultiplier { get; private set; }
     public static MelonPreferences_Entry<float> JexpMultiplier { get; private set; }
     public static MelonPreferences_Entry<float> GoldMultiplier { get; private set; }
 
     // Damage
+    public static MelonPreferences_Entry<bool> DamageCapEnabled { get; private set; }
     public static MelonPreferences_Entry<int> DamageCapOverride { get; private set; }
 
     // BP
+    public static MelonPreferences_Entry<bool> BpModEnabled { get; private set; }
     public static MelonPreferences_Entry<int> BpLimitOverride { get; private set; }
+    public static MelonPreferences_Entry<int> BpPerTurn { get; private set; }
 
     // Battle speed
+    public static MelonPreferences_Entry<bool> SpeedModEnabled { get; private set; }
     public static MelonPreferences_Entry<float> BattleSpeedMultiplier { get; private set; }
 
     // Colony
+    public static MelonPreferences_Entry<bool> ColonyModEnabled { get; private set; }
     public static MelonPreferences_Entry<float> ColonySpeedMultiplier { get; private set; }
 
     // Scene skip
     public static MelonPreferences_Entry<bool> ForceSceneSkip { get; private set; }
 
-    // Toggle states (runtime, not persisted)
-    public static bool ExpBoostEnabled { get; set; } = true;
-    public static bool DamageCapEnabled { get; set; } = true;
+    // Support ability cost
+    public static MelonPreferences_Entry<bool> SupportCostModEnabled { get; private set; }
+    public static MelonPreferences_Entry<int> SupportCostOverride { get; private set; }
+
+    // Future: harder mode, buff limits, autobattle
+    // public static MelonPreferences_Entry<bool> HarderModeEnabled { get; private set; }
+    // public static MelonPreferences_Entry<float> EnemyStatMultiplier { get; private set; }
 
     private static bool _initialized = false;
     private static HarmonyLib.Harmony _harmony;
 
-    public override void OnInitializeMelon()
-    {
-        InitializeIfNeeded();
-    }
-
-    // Called by MelonLoader even without support module
-    public override void OnEarlyInitializeMelon()
-    {
-        InitializeIfNeeded();
-    }
+    public override void OnInitializeMelon() => InitializeIfNeeded();
+    public override void OnEarlyInitializeMelon() => InitializeIfNeeded();
 
     private void InitializeIfNeeded()
     {
@@ -55,20 +59,38 @@ public class Core : MelonMod
 
         Config = MelonPreferences.CreateCategory("BravelyMod", "Bravely Mod Settings");
 
+        // Each feature: enable toggle + value(s)
+        ExpBoostEnabled = Config.CreateEntry("ExpBoostEnabled", true, "Enable EXP/JP/Gold multiplier");
         ExpMultiplier = Config.CreateEntry("ExpMultiplier", 10.0f, "EXP Multiplier");
         JexpMultiplier = Config.CreateEntry("JexpMultiplier", 10.0f, "JP Multiplier");
         GoldMultiplier = Config.CreateEntry("GoldMultiplier", 10.0f, "Gold Multiplier");
+
+        DamageCapEnabled = Config.CreateEntry("DamageCapEnabled", true, "Enable damage cap removal");
         DamageCapOverride = Config.CreateEntry("DamageCapOverride", 999999, "Damage Cap Override");
+
+        BpModEnabled = Config.CreateEntry("BpModEnabled", true, "Enable BP modifications");
         BpLimitOverride = Config.CreateEntry("BpLimitOverride", 9, "BP Limit Override");
+        BpPerTurn = Config.CreateEntry("BpPerTurn", 1, "BP gained per turn (vanilla=1)");
+
+        SpeedModEnabled = Config.CreateEntry("SpeedModEnabled", false, "Enable battle speed mod");
         BattleSpeedMultiplier = Config.CreateEntry("BattleSpeedMultiplier", 1.0f, "Battle Speed Multiplier");
+
+        ColonyModEnabled = Config.CreateEntry("ColonyModEnabled", true, "Enable colony speed mod");
         ColonySpeedMultiplier = Config.CreateEntry("ColonySpeedMultiplier", 10.0f, "Colony Speed Multiplier");
-        ForceSceneSkip = Config.CreateEntry("ForceSceneSkip", true, "Force Scene Skip Enabled");
 
-        // Native hooks — bypass broken Harmony IL2CPP detours on Unity 6
+        ForceSceneSkip = Config.CreateEntry("ForceSceneSkip", true, "Force scene skip always available");
+
+        SupportCostModEnabled = Config.CreateEntry("SupportCostModEnabled", true, "Enable support ability cost override");
+        SupportCostOverride = Config.CreateEntry("SupportCostOverride", 1, "Support ability equip cost (vanilla=1-4)");
+
+        // Native hooks (these actually work on Unity 6 IL2CPP)
         LoggerInstance.Msg("Applying native hooks...");
-        Patches.NativeExpPatch.Apply();
+        if (ExpBoostEnabled.Value)
+            Patches.NativeExpPatch.Apply();
+        if (SupportCostModEnabled.Value)
+            Patches.NativeSupportCostPatch.Apply();
 
-        // Also try Harmony patches (may work for some methods)
+        // Harmony patches (registered but may not intercept on Unity 6 — keeping for future compat)
         _harmony = new HarmonyLib.Harmony("com.struktured.bravelymod");
         var patchTypes = new System.Type[]
         {
@@ -92,61 +114,24 @@ public class Core : MelonMod
                 LoggerInstance.Warning($"  Harmony failed: {t.Name}: {ex.Message}");
             }
         }
-        LoggerInstance.Msg($"Harmony: {ok}/{patchTypes.Length} patch classes applied.");
+        LoggerInstance.Msg($"Harmony: {ok}/{patchTypes.Length} registered.");
 
-        LoggerInstance.Msg("BravelyMod initialized!");
-        LoggerInstance.Msg($"  EXP x{ExpMultiplier.Value}, JP x{JexpMultiplier.Value}, Gold x{GoldMultiplier.Value}");
-        LoggerInstance.Msg($"  Damage cap: {DamageCapOverride.Value}");
-        LoggerInstance.Msg($"  BP limit: {BpLimitOverride.Value}");
-        LoggerInstance.Msg($"  Colony speed: x{ColonySpeedMultiplier.Value}");
-        LoggerInstance.Msg($"  Scene skip: {ForceSceneSkip.Value}");
+        LoggerInstance.Msg("BravelyMod v0.2.0 initialized!");
+        LoggerInstance.Msg($"  EXP boost: {(ExpBoostEnabled.Value ? $"x{ExpMultiplier.Value}" : "OFF")}");
+        LoggerInstance.Msg($"  JP boost:  {(ExpBoostEnabled.Value ? $"x{JexpMultiplier.Value}" : "OFF")}");
+        LoggerInstance.Msg($"  Gold boost:{(ExpBoostEnabled.Value ? $"x{GoldMultiplier.Value}" : "OFF")}");
+        LoggerInstance.Msg($"  Damage cap:{(DamageCapEnabled.Value ? $"{DamageCapOverride.Value}" : "OFF")}");
+        LoggerInstance.Msg($"  BP limit:  {(BpModEnabled.Value ? $"{BpLimitOverride.Value}" : "OFF")}");
+        LoggerInstance.Msg($"  BP/turn:   {BpPerTurn.Value}");
+        LoggerInstance.Msg($"  Speed:     {(SpeedModEnabled.Value ? $"x{BattleSpeedMultiplier.Value}" : "OFF")}");
+        LoggerInstance.Msg($"  Colony:    {(ColonyModEnabled.Value ? $"x{ColonySpeedMultiplier.Value}" : "OFF")}");
+        LoggerInstance.Msg($"  Scene skip:{ForceSceneSkip.Value}");
+        LoggerInstance.Msg($"  Support$:  {(SupportCostModEnabled.Value ? $"{SupportCostOverride.Value}" : "OFF")}");
+        LoggerInstance.Msg("Edit UserData/MelonPreferences.cfg to toggle features.");
     }
 
     public override void OnUpdate()
     {
-        // Ensure init even if early/normal init didn't fire
         InitializeIfNeeded();
-        HandleHotkeys();
-    }
-
-    private void HandleHotkeys()
-    {
-        if (!_initialized) return;
-
-        // F1-F4: Battle speed presets
-        if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F1))
-        {
-            BattleSpeedMultiplier.Value = 1.0f;
-            LoggerInstance.Msg("Battle speed: 1x (normal)");
-        }
-        else if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F2))
-        {
-            BattleSpeedMultiplier.Value = 2.0f;
-            LoggerInstance.Msg("Battle speed: 2x");
-        }
-        else if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F3))
-        {
-            BattleSpeedMultiplier.Value = 4.0f;
-            LoggerInstance.Msg("Battle speed: 4x");
-        }
-        else if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F4))
-        {
-            BattleSpeedMultiplier.Value = 8.0f;
-            LoggerInstance.Msg("Battle speed: 8x");
-        }
-
-        // F5: Toggle EXP boost
-        if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F5))
-        {
-            ExpBoostEnabled = !ExpBoostEnabled;
-            LoggerInstance.Msg($"EXP boost: {(ExpBoostEnabled ? "ON" : "OFF")}");
-        }
-
-        // F6: Toggle damage cap removal
-        if (UnityEngine.Input.GetKeyDown(UnityEngine.KeyCode.F6))
-        {
-            DamageCapEnabled = !DamageCapEnabled;
-            LoggerInstance.Msg($"Damage cap removal: {(DamageCapEnabled ? "ON" : "OFF")}");
-        }
     }
 }

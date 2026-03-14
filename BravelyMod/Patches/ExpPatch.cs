@@ -16,7 +16,7 @@ public static class ExpPatch
         if (_callCount <= 3)
             Melon<Core>.Logger.Msg($"[EXP HOOK] ReviseAddEXP called! exp={exp} bonus={bonusexp}");
 
-        if (!Core.ExpBoostEnabled) return;
+        if (!Core.ExpBoostEnabled.Value) return;
         var mult = Core.ExpMultiplier.Value;
         exp = (int)(exp * mult);
         bonusexp = (int)(bonusexp * mult);
@@ -29,7 +29,7 @@ public static class ExpPatch
     [HarmonyPrefix]
     public static void ReviseAddJEXP_Prefix(ref int jexp, ref int bonusjexp)
     {
-        if (!Core.ExpBoostEnabled) return;
+        if (!Core.ExpBoostEnabled.Value) return;
         var mult = Core.JexpMultiplier.Value;
         jexp = (int)(jexp * mult);
         bonusjexp = (int)(bonusjexp * mult);
@@ -39,7 +39,7 @@ public static class ExpPatch
     [HarmonyPostfix]
     public static void GetCalculatedAbilityGold_Postfix(ref int __result)
     {
-        if (!Core.ExpBoostEnabled) return;
+        if (!Core.ExpBoostEnabled.Value) return;
         var mult = Core.GoldMultiplier.Value;
         __result = (int)(__result * mult);
     }
