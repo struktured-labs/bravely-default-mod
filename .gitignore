@@ -8,7 +8,8 @@ seed_*
 \#*
 settingsM*.json
 settingsW*.json
-Bravely*
+BravelyDefault*
+BravelySecond*
 romfs*
 citra*
 *.pickle
@@ -47,3 +48,15 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Temp
+tmp/
+setenv.sh
+
+# C# / .NET build artifacts
+BravelyMod/bin/
+BravelyMod/obj/
+
+# Large binary dumps
+data/il2cpp_dump/
+tools/il2cppdumper/

@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>BravelyMod</AssemblyName>
+    <RootNamespace>BravelyMod</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Copy output to MelonLoader Mods folder -->
+    <GameDir Condition="'$(GameDir)' == ''">$(HOME)/.steam/debian-installation/steamapps/common/BDFFHD</GameDir>
+    <OutputPath>bin/$(Configuration)</OutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- MelonLoader core references -->
+    <Reference Include="MelonLoader">
+      <HintPath>$(GameDir)/MelonLoader/net6/MelonLoader.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2Cppmscorlib">
+      <HintPath>$(GameDir)/MelonLoader/Il2CppAssemblies/Il2Cppmscorlib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2CppInterop.Runtime">
+      <HintPath>$(GameDir)/MelonLoader/net6/Il2CppInterop.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Harmony (bundled with MelonLoader) -->
+    <Reference Include="0Harmony">
+      <HintPath>$(GameDir)/MelonLoader/net6/0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Unhollowed game assemblies - added after first launch -->
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(GameDir)/MelonLoader/Il2CppAssemblies/Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Il2CppSystem">
+      <HintPath>$(GameDir)/MelonLoader/Il2CppAssemblies/Il2CppSystem.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Unity engine modules -->
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(GameDir)/MelonLoader/Il2CppAssemblies/UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(GameDir)/MelonLoader/Il2CppAssemblies/UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Auto-deploy to Mods folder after build -->
+  <Target Name="CopyToMods" AfterTargets="Build">
+    <Copy SourceFiles="$(OutputPath)/$(AssemblyName).dll"
+          DestinationFolder="$(GameDir)/Mods/"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

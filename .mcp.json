@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "ghidra": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/home/struktured/projects/3ds-analysis-toolkit",
+        "ghidra-mcp"
+      ],
+      "env": {
+        "GHIDRA_HOME": "/home/struktured/ghidra/ghidra_11.2.1_PUBLIC",
+        "GHIDRA_PROJECT_DIR": "/home/struktured/projects/bravely-default-rm/tmp/ghidra_projects",
+        "JAVA_HOME": "/usr/lib/jvm/java-21-openjdk-amd64"
+      }
+    }
+  }
+}
