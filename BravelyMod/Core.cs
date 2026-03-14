@@ -42,9 +42,9 @@ public class Core : MelonMod
     public static MelonPreferences_Entry<bool> SupportCostModEnabled { get; private set; }
     public static MelonPreferences_Entry<int> SupportCostOverride { get; private set; }
 
-    // Future: harder mode, buff limits, autobattle
-    // public static MelonPreferences_Entry<bool> HarderModeEnabled { get; private set; }
-    // public static MelonPreferences_Entry<float> EnemyStatMultiplier { get; private set; }
+    // Walk speed
+    public static MelonPreferences_Entry<bool> WalkSpeedModEnabled { get; private set; }
+    public static MelonPreferences_Entry<float> WalkSpeedMultiplier { get; private set; }
 
     private static bool _initialized = false;
     private static HarmonyLib.Harmony _harmony;
@@ -83,6 +83,9 @@ public class Core : MelonMod
         SupportCostModEnabled = Config.CreateEntry("SupportCostModEnabled", true, "Enable support ability cost override");
         SupportCostOverride = Config.CreateEntry("SupportCostOverride", 1, "Support ability equip cost (vanilla=1-4)");
 
+        WalkSpeedModEnabled = Config.CreateEntry("WalkSpeedModEnabled", true, "Enable speed walk (skip trotter)");
+        WalkSpeedMultiplier = Config.CreateEntry("WalkSpeedMultiplier", 3.0f, "Walk/dash speed multiplier (vanilla dash=1.6)");
+
         // Native hooks (these actually work on Unity 6 IL2CPP)
         LoggerInstance.Msg("Applying native hooks...");
         if (ExpBoostEnabled.Value)
@@ -92,6 +95,8 @@ public class Core : MelonMod
         if (BpModEnabled.Value)
             Patches.NativeBPPatch.Apply();
         Patches.NativeBuffPatch.Apply();
+        if (WalkSpeedModEnabled.Value)
+            Patches.NativeSpeedWalkPatch.Apply();
 
         // Harmony patches (registered but may not intercept on Unity 6 — keeping for future compat)
         _harmony = new HarmonyLib.Harmony("com.struktured.bravelymod");
@@ -130,6 +135,7 @@ public class Core : MelonMod
         LoggerInstance.Msg($"  Colony:    {(ColonyModEnabled.Value ? $"x{ColonySpeedMultiplier.Value}" : "OFF")}");
         LoggerInstance.Msg($"  Scene skip:{ForceSceneSkip.Value}");
         LoggerInstance.Msg($"  Support$:  {(SupportCostModEnabled.Value ? $"{SupportCostOverride.Value}" : "OFF")}");
+        LoggerInstance.Msg($"  WalkSpeed: {(WalkSpeedModEnabled.Value ? $"x{WalkSpeedMultiplier.Value}" : "OFF")}");
         LoggerInstance.Msg("Edit UserData/MelonPreferences.cfg to toggle features.");
     }
 
