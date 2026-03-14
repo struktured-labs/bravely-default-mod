@@ -62,7 +62,7 @@ public class Core : MelonMod
         // Each feature: enable toggle + value(s)
         ExpBoostEnabled = Config.CreateEntry("ExpBoostEnabled", true, "Enable EXP/JP/Gold multiplier");
         ExpMultiplier = Config.CreateEntry("ExpMultiplier", 10.0f, "EXP Multiplier");
-        JexpMultiplier = Config.CreateEntry("JexpMultiplier", 10.0f, "JP Multiplier");
+        JexpMultiplier = Config.CreateEntry("JexpMultiplier", 1000.0f, "JP Multiplier");
         GoldMultiplier = Config.CreateEntry("GoldMultiplier", 10.0f, "Gold Multiplier");
 
         DamageCapEnabled = Config.CreateEntry("DamageCapEnabled", true, "Enable damage cap removal");
@@ -89,7 +89,10 @@ public class Core : MelonMod
         // Native hooks (these actually work on Unity 6 IL2CPP)
         LoggerInstance.Msg("Applying native hooks...");
         if (ExpBoostEnabled.Value)
+        {
             Patches.NativeExpPatch.Apply();
+            Patches.NativeResultDisplayPatch.Apply();
+        }
         if (SupportCostModEnabled.Value)
             Patches.NativeSupportCostPatch.Apply();
         if (BpModEnabled.Value)
