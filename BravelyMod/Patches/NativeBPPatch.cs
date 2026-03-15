@@ -83,27 +83,24 @@ public static unsafe class NativeBPPatch
             if (!Core.BpModEnabled.Value)
                 return _setBPHook.Trampoline(instance, bp, methodInfo);
 
-            // The original clamps to [-4, 3]. We extend to [-BpLimit, +BpLimit]
+            // Decompiled SetBP: clamps to Max(-4, Min(bp, 3_or_4)), stores at this[0x28]+0x18
+            // We call original (which clamps to 3), then overwrite with our extended clamp
             int limit = Core.BpLimitOverride.Value;
             int clampedBP = System.Math.Max(-limit, System.Math.Min(limit, bp));
 
-            _setBPLog++;
-            if (_setBPLog <= 5)
-                Melon<Core>.Logger.Msg($"[BP] SetBP({bp}) -> clamped to {clampedBP} (limit ±{limit})");
-
-            // Call original with our clamped value — it will re-clamp to [-4,3] but
-            // we need to bypass that. Write directly to the field instead.
-            // BtlChara has CharacterState at offset 0x108, CharacterState.m_nBP at offset 0x34
-            // But we need to also call original for side effects. Let's call it then overwrite.
+            // Call original for side effects (returns old_bp - new_bp)
             _setBPHook.Trampoline(instance, bp, methodInfo);
 
-            // Overwrite the clamped result: BtlChara -> m_pParameter (0x108) -> m_nBP (0x34)
-            nint paramPtr = *(nint*)(instance + 0x108);
-            if (paramPtr != 0)
+            // Overwrite: this[0x28] is a pointer (offset 0x140), +0x18 is the BP value
+            nint statePtr = *(nint*)(instance + 0x140);
+            if (statePtr != 0)
             {
-                // CharacterState.m_nBP is at 0x34
-                *(int*)(paramPtr + 0x34) = clampedBP;
+                *(int*)(statePtr + 0x18) = clampedBP;
             }
+
+            _setBPLog++;
+            if (_setBPLog <= 5)
+                Melon<Core>.Logger.Msg($"[BP] SetBP({bp}) -> {clampedBP} (limit ±{limit})");
 
             return clampedBP;
         }
