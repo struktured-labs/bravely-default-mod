@@ -57,28 +57,39 @@ public static unsafe class NativeBPPatch
     private const uint PAGE_EXECUTE_READ = 0x20;
 
     // ── RVA offsets (from GameAssembly.dll image base) ──────────────
-    // SetBP function RVA = 0x99F1B0
-    // IsEnableBrave function RVA = 0x5BBFE0
+    // === THREE SetBP locations (all have hardcoded 0x03 for BP cap) ===
 
-    // SetBP: lea 0x3(%rsi),%edx — the immediate 0x03 byte
-    private const long RVA_SetBP_MaxBP = 0x99F1B0 + 0x88;        // 0x99F238
+    // 1. ReadyAP (BtlCharaPlayer) — THE CRITICAL ONE: per-turn BP recovery cap
+    //    ADD R14D, 0x3 at VA 0x18098FCDE, the 0x03 byte is at 0x18098FCE1
+    private const long RVA_ReadyAP_MaxBP = 0x98FCE1;
+    private const byte OLD_ReadyAP_MaxBP = 0x03;
+    private const byte NEW_ReadyAP_MaxBP = 0x09;
+
+    // 2. BtlCharaPlayer::SetBP — player override SetBP clamp
+    //    LEA EDX, [RSI+0x3] at VA 0x18098FFC6, the 0x03 byte is at 0x18098FFC8
+    private const long RVA_PlayerSetBP_MaxBP = 0x98FFC8;
+    private const byte OLD_PlayerSetBP_MaxBP = 0x03;
+    private const byte NEW_PlayerSetBP_MaxBP = 0x09;
+
+    // 3. BtlChara::SetBP (base) — non-player fallback
+    private const long RVA_SetBP_MaxBP = 0x99F238;
     private const byte OLD_SetBP_MaxBP = 0x03;
-    private const byte NEW_SetBP_MaxBP = 0x09;                    // 3 → 9
+    private const byte NEW_SetBP_MaxBP = 0x09;
 
-    // SetBP: lea -0x4(%r8),%ecx — the immediate 0xFC byte
-    private const long RVA_SetBP_Floor = 0x99F1B0 + 0x98;         // 0x99F248
-    private const byte OLD_SetBP_Floor = 0xFC;                    // -4
-    private const byte NEW_SetBP_Floor = 0xF7;                    // -9
+    // SetBP floor: -4 → -9 (base class)
+    private const long RVA_SetBP_Floor = 0x99F248;
+    private const byte OLD_SetBP_Floor = 0xFC;
+    private const byte NEW_SetBP_Floor = 0xF7;
 
-    // IsEnableBrave: cmp $-4,%eax — the immediate 0xFC byte (encodes "> -5")
-    private const long RVA_Brave_BPFloor = 0x5BBFE0 + 0x1E4;     // 0x5BC1C4
-    private const byte OLD_Brave_BPFloor = 0xFC;                  // -4 (encodes > -5)
-    private const byte NEW_Brave_BPFloor = 0xF7;                  // -9 (encodes > -10)
+    // IsEnableBrave: BP floor check
+    private const long RVA_Brave_BPFloor = 0x5BC1C4;
+    private const byte OLD_Brave_BPFloor = 0xFC;
+    private const byte NEW_Brave_BPFloor = 0xF7;
 
-    // IsEnableBrave: cmp $4,%edi — the immediate 0x04 byte
-    private const long RVA_Brave_ActionCap = 0x5BBFE0 + 0x1EA;   // 0x5BC1CA
+    // IsEnableBrave: action cap 4 → 10
+    private const long RVA_Brave_ActionCap = 0x5BC1CA;
     private const byte OLD_Brave_ActionCap = 0x04;
-    private const byte NEW_Brave_ActionCap = 0x0A;                // 4 → 10
+    private const byte NEW_Brave_ActionCap = 0x0A;
 
     // ── Public entry point ──────────────────────────────────────────
 
@@ -114,16 +125,28 @@ public static unsafe class NativeBPPatch
             Melon<Core>.Logger.Msg($"[BP-Patch] GameAssembly.dll base: 0x{dllBase:X}");
 
             int patched = 0;
+
+            // THE critical patch: ReadyAP per-turn recovery cap
+            patched += PatchByte(dllBase, RVA_ReadyAP_MaxBP, OLD_ReadyAP_MaxBP, NEW_ReadyAP_MaxBP,
+                "ReadyAP maxBP (3→9) [CRITICAL]") ? 1 : 0;
+
+            // Player SetBP override clamp
+            patched += PatchByte(dllBase, RVA_PlayerSetBP_MaxBP, OLD_PlayerSetBP_MaxBP, NEW_PlayerSetBP_MaxBP,
+                "PlayerSetBP maxBP (3→9)") ? 1 : 0;
+
+            // Base SetBP clamp (non-player fallback)
             patched += PatchByte(dllBase, RVA_SetBP_MaxBP, OLD_SetBP_MaxBP, NEW_SetBP_MaxBP,
-                "SetBP maxBP (3→9)") ? 1 : 0;
+                "BaseSetBP maxBP (3→9)") ? 1 : 0;
             patched += PatchByte(dllBase, RVA_SetBP_Floor, OLD_SetBP_Floor, NEW_SetBP_Floor,
                 "SetBP floor (-4→-9)") ? 1 : 0;
+
+            // IsEnableBrave limits
             patched += PatchByte(dllBase, RVA_Brave_BPFloor, OLD_Brave_BPFloor, NEW_Brave_BPFloor,
                 "IsEnableBrave BP floor (-5→-10)") ? 1 : 0;
             patched += PatchByte(dllBase, RVA_Brave_ActionCap, OLD_Brave_ActionCap, NEW_Brave_ActionCap,
                 "IsEnableBrave action cap (4→10)") ? 1 : 0;
 
-            Melon<Core>.Logger.Msg($"[BP-Patch] Memory patches applied: {patched}/4");
+            Melon<Core>.Logger.Msg($"[BP-Patch] Memory patches applied: {patched}/6");
         }
         catch (System.Exception ex)
         {
