@@ -46,13 +46,19 @@ public static unsafe class NativeBPPatch
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void d_ReadyAP(nint instance, nint methodInfo);
 
+    // int GetLimitBP(BtlChara pChr, MethodInfo*) — static, returns BP cap for UI flash
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int d_GetLimitBP(nint pChr, nint methodInfo);
+
     private static NativeHook<d_AddBPByTeam> _addBPHook;
     private static NativeHook<d_IsEnableBrave> _braveHook;
     private static NativeHook<d_ReadyAP> _readyAPHook;
+    private static NativeHook<d_GetLimitBP> _getLimitBPHook;
 
     private static d_AddBPByTeam _pAddBP;
     private static d_IsEnableBrave _pBrave;
     private static d_ReadyAP _pReadyAP;
+    private static d_GetLimitBP _pGetLimitBP;
 
     // ── VirtualProtect P/Invoke (Windows/Wine) ──────────────────────
 
@@ -118,6 +124,11 @@ public static unsafe class NativeBPPatch
         Hook(typeof(Il2Cpp.gfc),
             "NativeMethodInfoPtr_IsEnableBrave_Public_Static_Boolean_Int32_BtlLayoutCtrl_0",
             "IsEnableBrave", ref _pBrave, IsEnableBrave_Hook, out _braveHook);
+
+        // Hook GetLimitBP — UI flashes BP display when BP >= GetLimitBP(); return our configured limit
+        Hook(typeof(Il2Cpp.gfc),
+            "NativeMethodInfoPtr_GetLimitBP_Public_Static_Int32_BtlChara_0",
+            "GetLimitBP", ref _pGetLimitBP, GetLimitBP_Hook, out _getLimitBPHook);
     }
 
     // ── Memory patching ─────────────────────────────────────────────
@@ -386,6 +397,33 @@ public static unsafe class NativeBPPatch
         catch
         {
             try { _readyAPHook.Trampoline(instance, methodInfo); } catch { }
+        }
+    }
+
+    // ── GetLimitBP hook (return configured limit instead of 3) ───────
+
+    private static int _getLimitBPLog = 0;
+
+    private static int GetLimitBP_Hook(nint pChr, nint methodInfo)
+    {
+        try
+        {
+            int original = _getLimitBPHook.Trampoline(pChr, methodInfo);
+
+            if (!Core.BpModEnabled.Value)
+                return original;
+
+            int limit = Core.BpLimitOverride.Value;
+
+            _getLimitBPLog++;
+            if (_getLimitBPLog <= 5)
+                Melon<Core>.Logger.Msg($"[BP] GetLimitBP: {original} -> {limit}");
+
+            return limit;
+        }
+        catch
+        {
+            return Core.BpLimitOverride.Value;
         }
     }
 }
