@@ -70,10 +70,10 @@ public class Core : MelonMod
 
         BpModEnabled = Config.CreateEntry("BpModEnabled", true, "Enable BP modifications");
         BpLimitOverride = Config.CreateEntry("BpLimitOverride", 9, "BP Limit Override");
-        BpPerTurn = Config.CreateEntry("BpPerTurn", 1, "BP gained per turn (vanilla=1)");
+        BpPerTurn = Config.CreateEntry("BpPerTurn", 2, "BP gained per turn (vanilla=1)");
 
-        SpeedModEnabled = Config.CreateEntry("SpeedModEnabled", false, "Enable battle speed mod");
-        BattleSpeedMultiplier = Config.CreateEntry("BattleSpeedMultiplier", 1.0f, "Battle Speed Multiplier");
+        SpeedModEnabled = Config.CreateEntry("SpeedModEnabled", true, "Enable battle speed mod");
+        BattleSpeedMultiplier = Config.CreateEntry("BattleSpeedMultiplier", 2.0f, "Battle Speed Multiplier (applied on top of in-game speed)");
 
         ColonyModEnabled = Config.CreateEntry("ColonyModEnabled", true, "Enable colony speed mod");
         ColonySpeedMultiplier = Config.CreateEntry("ColonySpeedMultiplier", 10.0f, "Colony Speed Multiplier");
@@ -84,7 +84,7 @@ public class Core : MelonMod
         SupportCostOverride = Config.CreateEntry("SupportCostOverride", 1, "Support ability equip cost (vanilla=1-4)");
 
         WalkSpeedModEnabled = Config.CreateEntry("WalkSpeedModEnabled", true, "Enable speed walk (skip trotter)");
-        WalkSpeedMultiplier = Config.CreateEntry("WalkSpeedMultiplier", 3.0f, "Walk/dash speed multiplier (vanilla dash=1.6)");
+        WalkSpeedMultiplier = Config.CreateEntry("WalkSpeedMultiplier", 2.5f, "Walk/dash speed multiplier (applied on top of dash)");
 
         // Native hooks (these actually work on Unity 6 IL2CPP)
         LoggerInstance.Msg("Applying native hooks...");
@@ -100,6 +100,11 @@ public class Core : MelonMod
         Patches.NativeBuffPatch.Apply();
         if (WalkSpeedModEnabled.Value)
             Patches.NativeSpeedWalkPatch.Apply();
+        Patches.NativeAutoBattlePatch.Apply();
+        // Button swap disabled — use Steam Input controller config instead
+        // Patches.NativeButtonSwapPatch.Apply();
+        if (SpeedModEnabled.Value)
+            Patches.NativeBattleSpeedPatch.Apply();
 
         // Harmony patches (registered but may not intercept on Unity 6 — keeping for future compat)
         _harmony = new HarmonyLib.Harmony("com.struktured.bravelymod");
