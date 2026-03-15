@@ -32,8 +32,15 @@ public static unsafe class NativeMusicPatch
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate nint d_PlayBGM(nint instance, nint pFilename, byte loopFlag, int fadeFrame, nint methodInfo);
 
+    // void StopBGM(this BtlSoundManager, int fadeFrame, MethodInfo*)
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void d_StopBGM(nint instance, int fadeFrame, nint methodInfo);
+
     private static NativeHook<d_PlayBGM> _playBGMHook;
     private static d_PlayBGM _pinnedDelegate;
+
+    private static NativeHook<d_StopBGM> _stopBGMHook;
+    private static d_StopBGM _pinnedStopDelegate;
 
     private static CriPlayer _customPlayer;
     private static bool _customPlaying;
@@ -68,10 +75,40 @@ public static unsafe class NativeMusicPatch
             _playBGMHook = new NativeHook<d_PlayBGM>(nativePtr, Marshal.GetFunctionPointerForDelegate(_pinnedDelegate));
             _playBGMHook.Attach();
             Melon<Core>.Logger.Msg("[Music] PlayBGM hook attached!");
+
+            // Also hook StopBGM to stop custom player when battle ends
+            var stopField = typeof(Il2Cpp.BtlSoundManager).GetField(
+                "NativeMethodInfoPtr_StopBGM_Public_Void_Int32_0",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            if (stopField != null)
+            {
+                var stopMi = (nint)stopField.GetValue(null);
+                if (stopMi != 0)
+                {
+                    var stopNative = *(nint*)stopMi;
+                    _pinnedStopDelegate = StopBGM_Hook;
+                    _stopBGMHook = new NativeHook<d_StopBGM>(stopNative, Marshal.GetFunctionPointerForDelegate(_pinnedStopDelegate));
+                    _stopBGMHook.Attach();
+                    Melon<Core>.Logger.Msg("[Music] StopBGM hook attached!");
+                }
+            }
         }
         catch (Exception ex)
         {
             Melon<Core>.Logger.Warning($"[Music] Hook failed: {ex}");
+        }
+    }
+
+    private static void StopBGM_Hook(nint instance, int fadeFrame, nint methodInfo)
+    {
+        try
+        {
+            StopCustomPlayer();
+            _stopBGMHook.Trampoline(instance, fadeFrame, methodInfo);
+        }
+        catch
+        {
+            try { _stopBGMHook.Trampoline(instance, fadeFrame, methodInfo); } catch { }
         }
     }
 
@@ -254,7 +291,7 @@ overrides:
                 if ((int)status >= 3) // PlayEnd or Error
                 {
                     _customPlayer.SetFile(null, _currentHcaPath);
-                    _customPlayer.SetVolume(1.0f);
+                    _customPlayer.SetVolume(0.5f);
                     _currentPlayback = _customPlayer.Start();
                 }
             }
@@ -272,7 +309,7 @@ overrides:
             if (_customPlayer == null || !_customPlayer.isAvailable) return 0;
 
             _customPlayer.SetFile(null, hcaPath);
-            _customPlayer.SetVolume(1.0f);
+            _customPlayer.SetVolume(0.5f);
             var playback = _customPlayer.Start();
             _customPlaying = true;
             Melon<Core>.Logger.Msg($"[Music] Custom playback started (id={playback.id})");
