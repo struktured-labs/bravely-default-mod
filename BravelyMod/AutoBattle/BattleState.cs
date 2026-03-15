@@ -37,8 +37,14 @@ public static unsafe class BattleState
     // BtlChara.m_ap -> BtlActionPoint (class reference at 0x148)
     private const int OFF_CHARA_AP = 0x148;
 
+    // BtlChara.m_pStatusManager -> BtlStatusManager (class reference at 0x150)
+    private const int OFF_CHARA_STATUS_MGR = 0x150;
+
     // BtlActionPoint.m_ap (int at 0x10)
     private const int OFF_AP_VALUE = 0x10;
+
+    // BtlStatusManager.m_statusFlag (uint at 0x44) — bitmask of BTLDEF.CharaStatusFlag
+    private const int OFF_STATUS_FLAG = 0x44;
 
     // BtlCharaParameter fields (dump.cs offsets)
     private const int OFF_PARAM_HP    = 0x88;
@@ -157,9 +163,17 @@ public static unsafe class BattleState
                 if (bp < -10 || bp > 10) bp = 0;
             }
 
+            // Read status flags from BtlStatusManager
+            uint statusFlags = 0;
+            nint statusMgr = *(nint*)(charaPtr + OFF_CHARA_STATUS_MGR);
+            if (statusMgr != 0 && *(nint*)statusMgr != 0)
+            {
+                statusFlags = *(uint*)(statusMgr + OFF_STATUS_FLAG);
+            }
+
             bool isDead = hp <= 0;
 
-            return new CharacterSnapshot(index, team, hp, hpMax, mp, mpMax, bp, isDead);
+            return new CharacterSnapshot(index, team, hp, hpMax, mp, mpMax, bp, statusFlags, isDead);
         }
         catch
         {

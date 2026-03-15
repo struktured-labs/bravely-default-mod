@@ -156,6 +156,12 @@ public static class ProfileConfig
                     "HP < 25% \u2192 Cure Self, Guard",
                     "\u2192 Guard"
                 },
+                ["Heal All"] = new List<string>
+                {
+                    "Status \u2192 Esuna Hurt",
+                    "NeedHeal \u2192 Heal Hurt",
+                    "\u2192 Atk Weak"
+                },
                 ["Default"] = new List<string>()
             },
             Assignments = new List<string> { "Attack 4x", "Attack 4x", "Healer", "Attack 4x" }
@@ -363,6 +369,13 @@ public static class ProfileConfig
     public static Condition ParseCondition(string text)
     {
         text = text.Trim();
+        string lower = text.ToLowerInvariant();
+
+        // Special keyword conditions (no operator/value needed)
+        if (lower == "status" || lower == "hasstatus" || lower == "poisoned" || lower == "ailment")
+            return Condition.HasStatus();
+        if (lower == "needheal" || lower == "anyhurt" || lower == "allyneedsheal")
+            return Condition.AnyAllyNeedsHeal();
 
         // Match patterns like: STAT OP VALUE[%]
         // e.g. "HP < 30%", "Foes = 1", "BP > 2", "Turn = 1", "Allies < 3"
@@ -388,6 +401,7 @@ public static class ProfileConfig
             "foes" or "foe" or "enemies" or "enemy" => ConditionType.EnemyCount,
             "allies" or "ally" => ConditionType.AllyCount,
             "turn" or "turns" => ConditionType.TurnNumber,
+            "allystatus" or "statuscount" => ConditionType.AllyStatusCount,
             _ => ConditionType.Always,
         };
 
@@ -462,7 +476,7 @@ public static class ProfileConfig
             return new BattleAction(ActionType.Attack, target);
         }
 
-        // Cure variants: "Cure Self", "Cure Ally" (shorthand for Abl 1 Self/Ally)
+        // Cure variants: "Cure Self", "Cure Ally", "Cure Hurt" (shorthand for Abl 1 Self/Ally/MostHurt)
         if (lower.StartsWith("cure"))
         {
             string rest = Regex.Replace(text, @"^cure\s*", "", RegexOptions.IgnoreCase).Trim().ToLowerInvariant();
@@ -470,9 +484,40 @@ public static class ProfileConfig
             {
                 "self" or "me" => TargetSelector.Self,
                 "ally" or "allies" or "friend" => TargetSelector.WeakestAlly,
+                "hurt" or "mosthurt" or "urgent" => TargetSelector.MostHurtAlly,
                 _ => TargetSelector.Self,
             };
             return new BattleAction(ActionType.Ability, target, abilityId: 1);
+        }
+
+        // Heal variants: "Heal Hurt", "Heal Ally", "Heal Self"
+        // Synonym for Cure but targets MostHurtAlly by default
+        if (lower.StartsWith("heal"))
+        {
+            string rest = Regex.Replace(text, @"^heal\s*", "", RegexOptions.IgnoreCase).Trim().ToLowerInvariant();
+            var target = rest switch
+            {
+                "self" or "me" => TargetSelector.Self,
+                "ally" or "allies" or "friend" => TargetSelector.WeakestAlly,
+                "hurt" or "mosthurt" or "urgent" or "" => TargetSelector.MostHurtAlly,
+                _ => TargetSelector.MostHurtAlly,
+            };
+            return new BattleAction(ActionType.Ability, target, abilityId: 1);
+        }
+
+        // Esuna variants: "Esuna Hurt", "Esuna Ally", "Esuna Self"
+        // Esuna = ability ID 26 (white magic that cures status ailments)
+        if (lower.StartsWith("esuna"))
+        {
+            string rest = Regex.Replace(text, @"^esuna\s*", "", RegexOptions.IgnoreCase).Trim().ToLowerInvariant();
+            var target = rest switch
+            {
+                "self" or "me" => TargetSelector.Self,
+                "ally" or "allies" or "friend" => TargetSelector.WeakestAlly,
+                "hurt" or "mosthurt" or "urgent" or "" => TargetSelector.MostHurtAlly,
+                _ => TargetSelector.MostHurtAlly,
+            };
+            return new BattleAction(ActionType.Ability, target, abilityId: 26);
         }
 
         // Ability: "Abl N Target" e.g. "Abl 5 Foe", "Abl 3 Self"
@@ -503,6 +548,7 @@ public static class ProfileConfig
         {
             "self" or "me" => TargetSelector.Self,
             "ally" or "allies" or "friend" => TargetSelector.WeakestAlly,
+            "hurt" or "mosthurt" or "urgent" => TargetSelector.MostHurtAlly,
             "foe" or "foes" or "enemy" or "enemies" or "weak" => TargetSelector.WeakestEnemy,
             "strong" or "strongest" => TargetSelector.StrongestEnemy,
             "random" or "rnd" => TargetSelector.RandomEnemy,

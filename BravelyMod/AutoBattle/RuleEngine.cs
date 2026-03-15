@@ -14,6 +14,39 @@ namespace BravelyMod.AutoBattle;
 // Snapshots — plain data read from the battle state reader
 // ──────────────────────────────────────────────────────────────
 
+// ──────────────────────────────────────────────────────────────
+// Status flag bitmask — mirrors BTLDEF.CharaStatusFlag from IL2CPP
+// ──────────────────────────────────────────────────────────────
+
+[System.Flags]
+public enum StatusFlag : uint
+{
+    None       = 0,
+    Poison     = 1,
+    Blind      = 2,
+    Silence    = 4,
+    Sleep      = 8,
+    Paralysis  = 16,
+    Fear       = 32,
+    Berserk    = 64,
+    Confuse    = 128,
+    Charm      = 256,
+    Doom       = 512,       // SENKOKU (death sentence)
+    Reverse    = 1024,
+    Death      = 2048,
+    Stop       = 4096,
+    Love       = 8192,
+    Freeze     = 16384,
+    Regen      = 32768,
+    Reflect    = 65536,
+    Reraise    = 131072,
+    Jump       = 262144,
+
+    /// <summary>All ailments that are curable bad statuses (not buffs like Regen/Reflect/Reraise).</summary>
+    AllBadStatus = Poison | Blind | Silence | Sleep | Paralysis | Fear
+                 | Berserk | Confuse | Charm | Doom | Stop | Freeze,
+}
+
 public readonly struct CharacterSnapshot
 {
     public readonly int Index;
@@ -23,12 +56,40 @@ public readonly struct CharacterSnapshot
     public readonly int Mp;
     public readonly int MpMax;
     public readonly int Bp;
+    public readonly StatusFlag StatusFlags;
     public readonly bool IsDead;
 
     public float HpPercent => HpMax > 0 ? Hp * 100f / HpMax : 0f;
     public float MpPercent => MpMax > 0 ? Mp * 100f / MpMax : 0f;
 
-    public CharacterSnapshot(int index, int team, int hp, int hpMax, int mp, int mpMax, int bp, bool isDead)
+    /// <summary>True if the character has any curable bad status ailment.</summary>
+    public bool HasBadStatus => (StatusFlags & StatusFlag.AllBadStatus) != 0;
+
+    /// <summary>True if the character has a specific status flag.</summary>
+    public bool HasStatus(StatusFlag flag) => (StatusFlags & flag) != 0;
+
+    /// <summary>True if the character needs healing: HP below max or has a bad status.</summary>
+    public bool NeedsHealing => !IsDead && (Hp < HpMax || HasBadStatus);
+
+    /// <summary>
+    /// Healing priority score — higher means more urgent.
+    /// Factors in HP deficit and status ailments.
+    /// </summary>
+    public float HealPriority
+    {
+        get
+        {
+            if (IsDead) return 0f;
+            float hpDeficit = HpMax > 0 ? (1f - (float)Hp / HpMax) * 100f : 0f;
+            // Each bad status adds 25 points of urgency
+            int statusCount = 0;
+            uint flags = (uint)(StatusFlags & StatusFlag.AllBadStatus);
+            while (flags != 0) { statusCount += (int)(flags & 1); flags >>= 1; }
+            return hpDeficit + statusCount * 25f;
+        }
+    }
+
+    public CharacterSnapshot(int index, int team, int hp, int hpMax, int mp, int mpMax, int bp, uint statusFlags, bool isDead)
     {
         Index = index;
         Team = team;
@@ -37,6 +98,7 @@ public readonly struct CharacterSnapshot
         Mp = mp;
         MpMax = mpMax;
         Bp = bp;
+        StatusFlags = (StatusFlag)statusFlags;
         IsDead = isDead;
     }
 }
@@ -69,6 +131,53 @@ public readonly struct BattleSnapshot
         }
     }
 
+    /// <summary>Count of alive players who have at least one bad status ailment.</summary>
+    public int StatusAilmentPlayerCount
+    {
+        get
+        {
+            int count = 0;
+            foreach (var p in Players)
+                if (!p.IsDead && p.HasBadStatus) count++;
+            return count;
+        }
+    }
+
+    /// <summary>True if any alive player needs healing (HP deficit or bad status).</summary>
+    public bool AnyPlayerNeedsHealing
+    {
+        get
+        {
+            foreach (var p in Players)
+                if (p.NeedsHealing) return true;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Find the ally who most urgently needs healing (highest HealPriority).
+    /// Returns the index into the Players array, or -1 if nobody needs healing.
+    /// </summary>
+    public int MostUrgentHealTargetIndex
+    {
+        get
+        {
+            int bestIdx = -1;
+            float bestPriority = 0f;
+            for (int i = 0; i < Players.Length; i++)
+            {
+                if (Players[i].IsDead) continue;
+                float p = Players[i].HealPriority;
+                if (p > bestPriority)
+                {
+                    bestPriority = p;
+                    bestIdx = Players[i].Index;
+                }
+            }
+            return bestIdx;
+        }
+    }
+
     public BattleSnapshot(CharacterSnapshot[] players, CharacterSnapshot[] enemies, int turnNumber = 1)
     {
         Players = players;
@@ -83,7 +192,16 @@ public readonly struct BattleSnapshot
 
 public enum CompareOp { Less, LessOrEqual, Equal, GreaterOrEqual, Greater, NotEqual }
 
-public enum ConditionType { Always, HpPercent, MpPercent, EnemyCount, AllyCount, BpValue, TurnNumber }
+public enum ConditionType
+{
+    Always, HpPercent, MpPercent, EnemyCount, AllyCount, BpValue, TurnNumber,
+    /// <summary>True if self has any bad status ailment.</summary>
+    HasStatus,
+    /// <summary>True if any alive ally has a bad status ailment. Value = threshold count (compare op applied).</summary>
+    AllyStatusCount,
+    /// <summary>True if any alive ally needs healing (HP deficit or bad status). Always-true style, no value.</summary>
+    AnyAllyNeedsHeal,
+}
 
 public class Condition
 {
@@ -104,6 +222,9 @@ public class Condition
     public static Condition HpBelow(float pct) => new(ConditionType.HpPercent, CompareOp.Less, pct);
     public static Condition MpBelow(float pct) => new(ConditionType.MpPercent, CompareOp.Less, pct);
     public static Condition EnemyCountEquals(int n) => new(ConditionType.EnemyCount, CompareOp.Equal, n);
+    public static Condition HasStatus() => new(ConditionType.HasStatus, CompareOp.Greater, 0);
+    public static Condition AllyStatusCount(int n) => new(ConditionType.AllyStatusCount, CompareOp.GreaterOrEqual, n);
+    public static Condition AnyAllyNeedsHeal() => new(ConditionType.AnyAllyNeedsHeal, CompareOp.Equal, 0);
 
     public bool Evaluate(CharacterSnapshot self, BattleSnapshot battle)
     {
@@ -116,6 +237,9 @@ public class Condition
             ConditionType.AllyCount => Compare(battle.AlivePlayerCount, Op, Value),
             ConditionType.BpValue => Compare(self.Bp, Op, Value),
             ConditionType.TurnNumber => Compare(battle.TurnNumber, Op, Value),
+            ConditionType.HasStatus => self.HasBadStatus,
+            ConditionType.AllyStatusCount => Compare(battle.StatusAilmentPlayerCount, Op, Value),
+            ConditionType.AnyAllyNeedsHeal => battle.AnyPlayerNeedsHealing,
             _ => false,
         };
     }
@@ -156,6 +280,9 @@ public class Condition
             ConditionType.AllyCount => $"Allies{opStr}{Value:0}",
             ConditionType.BpValue => $"BP{opStr}{Value:0}",
             ConditionType.TurnNumber => $"Turn{opStr}{Value:0}",
+            ConditionType.HasStatus => "Status",
+            ConditionType.AllyStatusCount => $"AllyStatus{opStr}{Value:0}",
+            ConditionType.AnyAllyNeedsHeal => "NeedHeal",
             _ => "?"
         };
     }
@@ -167,7 +294,12 @@ public class Condition
 
 public enum ActionType { Attack, Ability, Item, Guard, Default }
 
-public enum TargetSelector { WeakestEnemy, StrongestEnemy, Self, WeakestAlly, RandomEnemy }
+public enum TargetSelector
+{
+    WeakestEnemy, StrongestEnemy, Self, WeakestAlly, RandomEnemy,
+    /// <summary>Targets the ally most in need of healing (highest HealPriority score).</summary>
+    MostHurtAlly,
+}
 
 public class BattleAction
 {
@@ -196,6 +328,10 @@ public class BattleAction
     public static BattleAction ItemOnAlly(int itemId) => new(ActionType.Item, TargetSelector.WeakestAlly, itemId: itemId);
     public static BattleAction GuardSelf() => new(ActionType.Guard, TargetSelector.Self);
     public static BattleAction DefaultAction() => new(ActionType.Default, TargetSelector.WeakestEnemy);
+    /// <summary>Heal the most hurt/statused ally with a given ability (e.g., Cure=1, Esuna, etc.).</summary>
+    public static BattleAction HealMostHurt(int abilityId) => new(ActionType.Ability, TargetSelector.MostHurtAlly, abilityId);
+    /// <summary>Use an item on the most hurt/statused ally.</summary>
+    public static BattleAction ItemOnMostHurt(int itemId) => new(ActionType.Item, TargetSelector.MostHurtAlly, itemId: itemId);
 
     /// <summary>
     /// Compact action label for command plate preview, e.g. "Atk Weak", "Cure", "Guard".
@@ -209,6 +345,7 @@ public class BattleAction
             TargetSelector.Self => " Self",
             TargetSelector.WeakestAlly => " Ally",
             TargetSelector.RandomEnemy => " Rnd",
+            TargetSelector.MostHurtAlly => " Hurt",
             _ => ""
         };
 
@@ -555,6 +692,13 @@ public class RuleEngine
             {
                 int idx = FindEnemy(battle, weakest: true); // just pick weakest as deterministic fallback
                 return idx >= 0 ? new ResolvedAction(action.Type, idx, true, action.AbilityId, action.ItemId) : null;
+            }
+
+            case TargetSelector.MostHurtAlly:
+            {
+                int idx = battle.MostUrgentHealTargetIndex;
+                if (idx < 0) idx = self.Index; // nobody needs healing, fallback to self
+                return new ResolvedAction(action.Type, idx, false, action.AbilityId, action.ItemId);
             }
 
             default:
