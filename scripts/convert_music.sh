@@ -110,7 +110,8 @@ mkdir -p "$CUSTOM_BGM_DIR"
 WAV_FILE="$TMP_DIR/${OUTPUT_NAME}.wav"
 
 echo "Converting to WAV (44100 Hz, stereo, 16-bit)..."
-# -fflags +bitexact -flags:a +bitexact strips metadata chunks (LIST/INFO)
+# -fflags +bitexact \
+    -map_metadata -1 -flags:a +bitexact strips metadata chunks (LIST/INFO)
 # that PyCriCodecs cannot parse. Without these flags, ffmpeg adds a Lavf
 # software tag that breaks the WAV header parser.
 ffmpeg -y -i "$INPUT_FILE" \
@@ -119,6 +120,7 @@ ffmpeg -y -i "$INPUT_FILE" \
     -sample_fmt s16 \
     -acodec pcm_s16le \
     -fflags +bitexact \
+    -map_metadata -1 \
     -flags:a +bitexact \
     "$WAV_FILE" 2>/dev/null
 

@@ -148,6 +148,11 @@ public static class ConfigServer
                     responseBody = HandleMusicPost(request);
                     break;
 
+                case "/music/save" when method == "POST":
+                    responseBody = HandleMusicSave(request);
+                    contentType = "application/json; charset=utf-8";
+                    break;
+
                 case "/music/reload" when method == "POST":
                     responseBody = HandleMusicReload();
                     break;
@@ -649,16 +654,21 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
             hcaHtml.Append($"<p class=\"dimmed\" id=\"fileList\">Error scanning folder: {WebUtility.HtmlEncode(ex.Message)}</p>");
         }
 
-        // Upload music widget (accepts HCA, MP3, WAV, OGG, FLAC — non-HCA converted server-side)
+        // Upload music widget — uses the Linux-side music conversion server on port 8889
         hcaHtml.Append(@"
             <div class=""upload-section"">
                 <div class=""section-label"">Upload Music File</div>
-                <p class=""cs-note"">Upload <strong>.hca</strong> files directly, or <strong>.mp3 / .wav / .ogg / .flac</strong> files for automatic server-side conversion.</p>
+                <p class=""cs-note"">Upload <strong>.mp3 / .wav / .ogg / .flac</strong> files — they are automatically converted to HCA via the music conversion server.
+                    You can also upload <strong>.hca</strong> files directly.</p>
+                <div id=""serverStatus"" class=""msg msg-warning"" style=""display:none"">
+                    Music conversion server not detected on port 8889. Start it with:
+                    <code>./scripts/start_music_server.sh</code>
+                </div>
                 <div class=""upload-area"" id=""uploadArea"">
-                    <input type=""file"" id=""hcaFileInput"" accept="".hca,.mp3,.wav,.ogg,.flac"" style=""display:none"" onchange=""uploadFile(this)""/>
+                    <input type=""file"" id=""hcaFileInput"" accept="".hca,.mp3,.wav,.ogg,.flac,.m4a,.aac"" style=""display:none"" onchange=""uploadFile(this)""/>
                     <div class=""upload-prompt"" onclick=""document.getElementById('hcaFileInput').click()"">
                         <span class=""upload-icon"">&#8682;</span>
-                        <span>Click to select audio file or drag &amp; drop<br/><small>.hca .mp3 .wav .ogg .flac</small></span>
+                        <span>Click to select audio file or drag &amp; drop<br/><small>.hca .mp3 .wav .ogg .flac .m4a .aac</small></span>
                     </div>
                     <div class=""upload-status"" id=""uploadStatus"" style=""display:none""></div>
                 </div>
@@ -666,7 +676,7 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                     <div style=""margin-bottom:8px;color:#e4a040"">Or paste a file path from your system:</div>
                     <div style=""display:flex;gap:8px"">
                         <input type=""text"" id=""pathInput"" placeholder=""/home/user/music/song.mp3"" style=""flex:1;padding:8px;background:#0f0f1a;border:1px solid #333;color:#eee;border-radius:4px;font-family:monospace""/>
-                        <button onclick=""var p=document.getElementById('pathInput').value.trim();if(!p)return;var s=document.getElementById('pathStatus');s.style.display='block';s.style.color='#aaa';s.textContent='Converting...';fetch('/music/convert-path',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:'path='+encodeURIComponent(p)}}).then(function(r){{return r.json()}}).then(function(d){{if(d.error){{s.style.color='#ff4444';s.textContent='Error: '+d.error}}else if(d.converting){{s.style.color='#e4a040';s.textContent='Converting...'}}else if(d.success){{s.style.color='#44ff44';s.textContent='Ready: '+d.path}}}}).catch(function(e){{s.style.color='#ff4444';s.textContent='Failed: '+e}})"" style=""padding:8px 16px;background:#e4a040;color:#000;border:none;border-radius:4px;cursor:pointer;font-weight:bold"">Convert</button>
+                        <button onclick=""convertFromPath()"" style=""padding:8px 16px;background:#e4a040;color:#000;border:none;border-radius:4px;cursor:pointer;font-weight:bold"">Convert</button>
                     </div>
                     <div id=""pathStatus"" style=""margin-top:8px;display:none""></div>
                 </div>
@@ -742,6 +752,29 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
             </div>
 
             <script>
+            // Music conversion server runs on Linux side (port 8889).
+            // HCA uploads go to the C# server (:8888), everything else goes to the
+            // Python conversion server (:8889) which handles ffmpeg + PyCriCodecs.
+            var MUSIC_SERVER = 'http://localhost:8889';
+            var musicServerAvailable = false;
+
+            // Check if the music conversion server is running
+            (function checkServer() {{
+                fetch(MUSIC_SERVER + '/health')
+                    .then(function(r) {{ return r.json(); }})
+                    .then(function(d) {{
+                        if (d.ok) {{
+                            musicServerAvailable = true;
+                            var el = document.getElementById('serverStatus');
+                            if (el) el.style.display = 'none';
+                        }}
+                    }})
+                    .catch(function() {{
+                        var el = document.getElementById('serverStatus');
+                        if (el) el.style.display = 'block';
+                    }});
+            }})();
+
             function doReloadMusic() {{
                 fetch('/music/reload', {{method:'POST'}}).then(()=>location.reload());
             }}
@@ -779,62 +812,159 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
             function uploadFile(input) {{
                 var file = input.files[0];
                 if (!file) return;
-                var validExts = ['.hca', '.mp3', '.wav', '.ogg', '.flac'];
+                var validExts = ['.hca', '.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'];
                 var ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
                 if (validExts.indexOf(ext) < 0) {{
                     showUploadStatus('Unsupported format. Accepted: ' + validExts.join(', '), 'error');
                     return;
                 }}
                 var isHca = ext === '.hca';
-                showUploadStatus(isHca ? 'Uploading ' + file.name + '...' : 'Uploading ' + file.name + ' (will convert to HCA server-side)...', 'info');
 
-                var fd = new FormData();
-                fd.append('file', file);
-
-                fetch('/music/upload', {{ method: 'POST', body: fd }})
-                    .then(function(r) {{ return r.json(); }})
-                    .then(function(data) {{
-                        if (data.error) {{
-                            showUploadStatus('Error: ' + data.error, 'error');
-                        }} else if (data.converting) {{
-                            showUploadStatus('File saved. Converting to HCA... (this may take a moment)', 'info');
-                            pollConversion(data.name);
-                        }} else {{
-                            showUploadStatus('Uploaded: ' + data.path + ' (' + formatSize(data.size) + ')', 'success');
-                            refreshFileList();
-                        }}
-                    }})
-                    .catch(function(err) {{
-                        showUploadStatus('Upload failed: ' + err, 'error');
-                    }});
+                if (isHca) {{
+                    // HCA files go directly to the C# server (small, no conversion needed)
+                    showUploadStatus('Uploading ' + file.name + '...', 'info');
+                    var fd = new FormData();
+                    fd.append('file', file);
+                    fetch('/music/upload', {{ method: 'POST', body: fd }})
+                        .then(function(r) {{ return r.json(); }})
+                        .then(function(data) {{
+                            if (data.error) {{
+                                showUploadStatus('Error: ' + data.error, 'error');
+                            }} else {{
+                                showUploadStatus('Uploaded: ' + data.path + ' (' + formatSize(data.size) + ')', 'success');
+                                refreshFileList();
+                            }}
+                        }})
+                        .catch(function(err) {{
+                            showUploadStatus('Upload failed: ' + err, 'error');
+                        }});
+                }} else {{
+                    // Non-HCA: send to the Python music conversion server on port 8889
+                    if (!musicServerAvailable) {{
+                        showUploadStatus('Music conversion server is not running. Start it: ./scripts/start_music_server.sh', 'error');
+                        return;
+                    }}
+                    showUploadStatus('Uploading ' + file.name + ' to conversion server...', 'info');
+                    var fd = new FormData();
+                    fd.append('file', file);
+                    fetch(MUSIC_SERVER + '/convert', {{ method: 'POST', body: fd }})
+                        .then(function(r) {{ return r.json(); }})
+                        .then(function(data) {{
+                            if (data.error) {{
+                                showUploadStatus('Error: ' + data.error, 'error');
+                            }} else if (data.converting) {{
+                                showUploadStatus('Converting ' + file.name + ' to HCA... (this may take a moment)', 'info');
+                                pollConversion(data.name);
+                            }} else if (data.success) {{
+                                showUploadStatus('Ready: ' + data.path + ' (' + formatSize(data.size) + ')', 'success');
+                                refreshFileList();
+                            }}
+                        }})
+                        .catch(function(err) {{
+                            showUploadStatus('Upload failed. Is the music server running? (./scripts/start_music_server.sh) Error: ' + err, 'error');
+                        }});
+                }}
                 input.value = ''; // reset so same file can be re-uploaded
             }}
 
             function pollConversion(name) {{
                 var attempts = 0;
-                var maxAttempts = 60; // 60 seconds max
+                var maxAttempts = 120; // 120 seconds max
                 var timer = setInterval(function() {{
                     attempts++;
-                    fetch('/music/convert-status?name=' + encodeURIComponent(name))
+                    fetch(MUSIC_SERVER + '/convert-status?name=' + encodeURIComponent(name))
                         .then(function(r) {{ return r.json(); }})
                         .then(function(data) {{
                             if (data.done) {{
                                 clearInterval(timer);
                                 if (data.error) {{
-                                    showUploadStatus('Conversion failed: ' + data.error + (data.manual_cmd ? '<br/><code>' + data.manual_cmd + '</code>' : ''), 'error');
+                                    showUploadStatus('Conversion failed: ' + data.error, 'error');
                                 }} else {{
                                     showUploadStatus('Converted: ' + data.path + ' (' + formatSize(data.size) + ')', 'success');
                                     refreshFileList();
                                 }}
                             }} else if (attempts >= maxAttempts) {{
                                 clearInterval(timer);
-                                showUploadStatus('Conversion timed out. Run manually: <code>' + (data.manual_cmd || 'scripts/convert_music.sh') + '</code>', 'error');
+                                showUploadStatus('Conversion timed out. Try running: ./scripts/convert_music.sh &lt;file&gt;', 'error');
                             }}
                         }})
                         .catch(function() {{
                             if (attempts >= maxAttempts) {{
                                 clearInterval(timer);
-                                showUploadStatus('Could not check conversion status.', 'error');
+                                showUploadStatus('Could not reach conversion server.', 'error');
+                            }}
+                        }});
+                }}, 1000);
+            }}
+
+            function convertFromPath() {{
+                var p = document.getElementById('pathInput').value.trim();
+                if (!p) return;
+                if (!musicServerAvailable) {{
+                    var s = document.getElementById('pathStatus');
+                    s.style.display = 'block';
+                    s.style.color = '#ff4444';
+                    s.textContent = 'Music conversion server is not running. Start it: ./scripts/start_music_server.sh';
+                    return;
+                }}
+                var s = document.getElementById('pathStatus');
+                s.style.display = 'block';
+                s.style.color = '#aaa';
+                s.textContent = 'Converting...';
+                fetch(MUSIC_SERVER + '/convert-path', {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
+                    body: 'path=' + encodeURIComponent(p)
+                }})
+                .then(function(r) {{ return r.json(); }})
+                .then(function(d) {{
+                    if (d.error) {{
+                        s.style.color = '#ff4444';
+                        s.textContent = 'Error: ' + d.error;
+                    }} else if (d.converting) {{
+                        s.style.color = '#e4a040';
+                        s.textContent = 'Converting to HCA...';
+                        pollConversionPath(d.name, s);
+                    }} else if (d.success) {{
+                        s.style.color = '#44ff44';
+                        s.textContent = 'Ready: ' + d.path;
+                        refreshFileList();
+                    }}
+                }})
+                .catch(function(e) {{
+                    s.style.color = '#ff4444';
+                    s.textContent = 'Failed: ' + e;
+                }});
+            }}
+
+            function pollConversionPath(name, statusEl) {{
+                var attempts = 0;
+                var timer = setInterval(function() {{
+                    attempts++;
+                    fetch(MUSIC_SERVER + '/convert-status?name=' + encodeURIComponent(name))
+                        .then(function(r) {{ return r.json(); }})
+                        .then(function(d) {{
+                            if (d.done) {{
+                                clearInterval(timer);
+                                if (d.error) {{
+                                    statusEl.style.color = '#ff4444';
+                                    statusEl.textContent = 'Error: ' + d.error;
+                                }} else {{
+                                    statusEl.style.color = '#44ff44';
+                                    statusEl.textContent = 'Ready: ' + d.path;
+                                    refreshFileList();
+                                }}
+                            }} else if (attempts >= 120) {{
+                                clearInterval(timer);
+                                statusEl.style.color = '#ff4444';
+                                statusEl.textContent = 'Conversion timed out.';
+                            }}
+                        }})
+                        .catch(function() {{
+                            if (attempts >= 120) {{
+                                clearInterval(timer);
+                                statusEl.style.color = '#ff4444';
+                                statusEl.textContent = 'Lost connection to conversion server.';
                             }}
                         }});
                 }}, 1000);
@@ -843,7 +973,7 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
             function showUploadStatus(msg, type) {{
                 var el = document.getElementById('uploadStatus');
                 el.style.display = 'block';
-                el.textContent = msg;
+                el.innerHTML = msg;
                 el.className = 'upload-status upload-status-' + type;
             }}
 
@@ -854,7 +984,9 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
             }}
 
             function refreshFileList() {{
-                fetch('/music/files')
+                // Try the Python server first (CORS-enabled), fall back to C# server
+                var url = musicServerAvailable ? MUSIC_SERVER + '/files' : '/music/files';
+                fetch(url)
                     .then(function(r) {{ return r.json(); }})
                     .then(function(data) {{
                         var container = document.getElementById('fileList');
@@ -869,6 +1001,25 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                         }} else {{
                             container.textContent = 'No .hca files found.';
                             container.className = 'dimmed';
+                        }}
+                    }})
+                    .catch(function() {{
+                        // If Python server failed, try C# server
+                        if (url !== '/music/files') {{
+                            fetch('/music/files')
+                                .then(function(r) {{ return r.json(); }})
+                                .then(function(data) {{
+                                    var container = document.getElementById('fileList');
+                                    if (!container) return;
+                                    if (data.files && data.files.length > 0) {{
+                                        var html = '';
+                                        data.files.forEach(function(f) {{
+                                            html += '<span class=""file-tag file-tag-click"" onclick=""copyPath(\'' + f.path + '\')"" title=""Click to copy path"">' + f.path + '</span> ';
+                                        }});
+                                        container.innerHTML = html;
+                                        container.className = 'file-list';
+                                    }}
+                                }});
                         }}
                     }});
             }}

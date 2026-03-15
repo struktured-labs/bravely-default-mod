@@ -53,6 +53,9 @@ Thumbs.db
 tmp/
 setenv.sh
 
+# Logs directory
+logs/
+
 # C# / .NET build artifacts
 BravelyMod/bin/
 BravelyMod/obj/
