@@ -42,11 +42,17 @@ public static unsafe class NativeBPPatch
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate byte d_IsEnableBrave(int partyindex, nint pBtlLayoutCtrl, nint methodInfo);
 
+    // void ReadyAP(this BtlChara, MethodInfo*) — per-turn BP recovery
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void d_ReadyAP(nint instance, nint methodInfo);
+
     private static NativeHook<d_AddBPByTeam> _addBPHook;
     private static NativeHook<d_IsEnableBrave> _braveHook;
+    private static NativeHook<d_ReadyAP> _readyAPHook;
 
     private static d_AddBPByTeam _pAddBP;
     private static d_IsEnableBrave _pBrave;
+    private static d_ReadyAP _pReadyAP;
 
     // ── VirtualProtect P/Invoke (Windows/Wine) ──────────────────────
 
@@ -97,6 +103,11 @@ public static unsafe class NativeBPPatch
     {
         // Apply memory patches to hardcoded constants
         ApplyMemoryPatches();
+
+        // Hook ReadyAP — the ACTUAL per-turn BP recovery function
+        Hook(typeof(Il2Cpp.BtlChara),
+            "NativeMethodInfoPtr_ReadyAP_Public_Virtual_New_Void_0",
+            "ReadyAP", ref _pReadyAP, ReadyAP_Hook, out _readyAPHook);
 
         // Hook AddBPByTeam for extra BP per turn
         Hook(typeof(Il2Cpp.BtlCharaManager),
@@ -311,5 +322,70 @@ public static unsafe class NativeBPPatch
             return _braveHook.Trampoline(partyindex, pBtlLayoutCtrl, methodInfo);
         }
         catch { return 0; }
+    }
+
+    // ── ReadyAP hook (brute force BP uncap) ───────────────────────────
+
+    private static int _readyAPLog = 0;
+
+    private static void ReadyAP_Hook(nint instance, nint methodInfo)
+    {
+        try
+        {
+            if (!Core.BpModEnabled.Value)
+            {
+                _readyAPHook.Trampoline(instance, methodInfo);
+                return;
+            }
+
+            // Read BP BEFORE ReadyAP runs
+            nint cmdCtrl = *(nint*)(instance + 0x140);
+            int bpBefore = (cmdCtrl != 0) ? *(int*)(cmdCtrl + 0x18) : 0;
+
+            // Call original — it recovers BP but caps at 3
+            _readyAPHook.Trampoline(instance, methodInfo);
+
+            // Read BP AFTER
+            if (cmdCtrl == 0) cmdCtrl = *(nint*)(instance + 0x140);
+            if (cmdCtrl == 0) return;
+            int bpAfter = *(int*)(cmdCtrl + 0x18);
+
+            int limit = Core.BpLimitOverride.Value;
+
+            // If BP was capped at 3 (or 4 with ability) but should be higher
+            if (bpAfter >= 3 && bpBefore >= 2 && bpAfter < limit)
+            {
+                // The original added +1 but capped. Uncap: set to bpBefore + 1
+                int uncapped = bpBefore + 1;
+
+                // Also add extra BP for +2/turn
+                int extra = Core.BpPerTurn.Value - 1;
+                uncapped += extra;
+
+                uncapped = System.Math.Min(uncapped, limit);
+                *(int*)(cmdCtrl + 0x18) = uncapped;
+                *(int*)(cmdCtrl + 0x1C) = uncapped;
+
+                _readyAPLog++;
+                if (_readyAPLog <= 10)
+                    Melon<Core>.Logger.Msg($"[BP] ReadyAP: {bpBefore} -> {bpAfter} (capped) -> {uncapped} (uncapped, limit {limit})");
+            }
+            else if (bpAfter > bpBefore && Core.BpPerTurn.Value > 1)
+            {
+                // Normal recovery happened, add extra
+                int extra = Core.BpPerTurn.Value - 1;
+                int boosted = System.Math.Min(bpAfter + extra, limit);
+                *(int*)(cmdCtrl + 0x18) = boosted;
+                *(int*)(cmdCtrl + 0x1C) = boosted;
+
+                _readyAPLog++;
+                if (_readyAPLog <= 10)
+                    Melon<Core>.Logger.Msg($"[BP] ReadyAP: {bpBefore} -> {bpAfter} -> {boosted} (+{extra} extra)");
+            }
+        }
+        catch
+        {
+            try { _readyAPHook.Trampoline(instance, methodInfo); } catch { }
+        }
     }
 }
