@@ -162,6 +162,16 @@ public static class ConfigServer
                     contentType = "application/json; charset=utf-8";
                     break;
 
+                case "/music/convert-status" when method == "GET":
+                    responseBody = HandleConvertStatus(request);
+                    contentType = "application/json; charset=utf-8";
+                    break;
+
+                case "/music/convert-path" when method == "POST":
+                    responseBody = HandleConvertFromPath(request);
+                    contentType = "application/json; charset=utf-8";
+                    break;
+
                 case "/settings" when method == "GET":
                     responseBody = HandleSettingsGet();
                     break;
@@ -652,8 +662,18 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                     </div>
                     <div class=""upload-status"" id=""uploadStatus"" style=""display:none""></div>
                 </div>
+                <div style=""margin-top:12px;padding:12px;background:#1a1a2e;border-radius:6px"">
+                    <div style=""margin-bottom:8px;color:#e4a040"">Or paste a file path from your system:</div>
+                    <div style=""display:flex;gap:8px"">
+                        <input type=""text"" id=""pathInput"" placeholder=""/home/user/music/song.mp3"" style=""flex:1;padding:8px;background:#0f0f1a;border:1px solid #333;color:#eee;border-radius:4px;font-family:monospace""/>
+                        <button onclick=""var p=document.getElementById('pathInput').value.trim();if(!p)return;var s=document.getElementById('pathStatus');s.style.display='block';s.style.color='#aaa';s.textContent='Converting...';fetch('/music/convert-path',{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},body:'path='+encodeURIComponent(p)}}).then(function(r){{return r.json()}}).then(function(d){{if(d.error){{s.style.color='#ff4444';s.textContent='Error: '+d.error}}else if(d.converting){{s.style.color='#e4a040';s.textContent='Converting...'}}else if(d.success){{s.style.color='#44ff44';s.textContent='Ready: '+d.path}}}}).catch(function(e){{s.style.color='#ff4444';s.textContent='Failed: '+e}})"" style=""padding:8px 16px;background:#e4a040;color:#000;border:none;border-radius:4px;cursor:pointer;font-weight:bold"">Convert</button>
+                    </div>
+                    <div id=""pathStatus"" style=""margin-top:8px;display:none""></div>
+                </div>
             </div>
         ");
+
+        // convertFromPath JS is embedded in the page HTML above via onclick
 
         // Build cue name reference
         var cueRefHtml = @"
@@ -1084,22 +1104,77 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
             if (string.IsNullOrWhiteSpace(fileName))
                 return "{\"error\":\"Invalid filename.\"}";
 
-            // Ensure .hca extension
-            if (!fileName.EndsWith(".hca", StringComparison.OrdinalIgnoreCase))
-                return "{\"error\":\"Only .hca files are accepted. Use the convert_music.sh script to convert MP3/WAV to HCA first.\"}";
+            string ext = Path.GetExtension(fileName).ToLowerInvariant();
+            var allowedExts = new HashSet<string> { ".hca", ".mp3", ".wav", ".ogg", ".flac" };
+            if (!allowedExts.Contains(ext))
+                return $"{{\"error\":\"Unsupported file format '{EscapeJson(ext)}'. Accepted: .hca, .mp3, .wav, .ogg, .flac\"}}";
 
-            // Validate it looks like an HCA file (magic bytes "HCA\0")
-            if (fileData.Length < 4 || fileData[0] != 0x48 || fileData[1] != 0x43 || fileData[2] != 0x41)
-                return "{\"error\":\"File does not appear to be a valid HCA file (bad magic bytes).\"}";
+            bool isHca = ext == ".hca";
 
-            // Write to CustomBGM/
-            string destPath = Path.Combine(bgmDir, fileName);
-            File.WriteAllBytes(destPath, fileData);
+            if (isHca)
+            {
+                // Validate HCA magic bytes
+                if (fileData.Length < 4 || fileData[0] != 0x48 || fileData[1] != 0x43 || fileData[2] != 0x41)
+                    return "{\"error\":\"File does not appear to be a valid HCA file (bad magic bytes).\"}";
 
-            string relativePath = $"CustomBGM/{fileName}";
-            Melon<Core>.Logger.Msg($"[WebConfig] Uploaded music file: {relativePath} ({fileData.Length} bytes)");
+                // Write HCA directly to CustomBGM/
+                string destPath = Path.Combine(bgmDir, fileName);
+                File.WriteAllBytes(destPath, fileData);
 
-            return $"{{\"success\":true,\"path\":\"{EscapeJson(relativePath)}\",\"name\":\"{EscapeJson(fileName)}\",\"size\":{fileData.Length}}}";
+                string relativePath = $"CustomBGM/{fileName}";
+                Melon<Core>.Logger.Msg($"[WebConfig] Uploaded HCA file: {relativePath} ({fileData.Length} bytes)");
+
+                return $"{{\"success\":true,\"path\":\"{EscapeJson(relativePath)}\",\"name\":\"{EscapeJson(fileName)}\",\"size\":{fileData.Length}}}";
+            }
+            else
+            {
+                // Non-HCA: save the source file and attempt conversion
+                // Sanitize name for filesystem: replace special chars with hyphens
+                string baseName = Path.GetFileNameWithoutExtension(fileName);
+                string safeBase = System.Text.RegularExpressions.Regex.Replace(baseName, @"[^a-zA-Z0-9._-]", "-");
+                safeBase = System.Text.RegularExpressions.Regex.Replace(safeBase, @"-{2,}", "-").Trim('-');
+                if (string.IsNullOrWhiteSpace(safeBase)) safeBase = "upload";
+
+                string safeFileName = safeBase + ext;
+                string destPath = Path.Combine(bgmDir, safeFileName);
+                File.WriteAllBytes(destPath, fileData);
+
+                Melon<Core>.Logger.Msg($"[WebConfig] Saved audio file for conversion: {safeFileName} ({fileData.Length} bytes)");
+
+                // Attempt server-side conversion via shell script
+                string hcaName = safeBase + ".hca";
+                string convertScript = FindConvertScript();
+                string manualCmd = $"scripts/convert_music.sh \"{destPath}\"";
+
+                if (convertScript != null)
+                {
+                    // Track conversion in progress
+                    lock (_conversions)
+                    {
+                        _conversions[safeBase] = new ConversionStatus
+                        {
+                            SourcePath = destPath,
+                            HcaName = hcaName,
+                            ManualCmd = manualCmd,
+                            StartedAt = DateTime.UtcNow
+                        };
+                    }
+
+                    // Start conversion in background thread
+                    string _key = safeBase, _script = convertScript, _src = destPath, _bgm = bgmDir;
+                    var convThread = new Thread(() => RunConversion(_key, _script, _src, _bgm))
+                    { IsBackground = true, Name = "BravelyMod-Convert" };
+                    convThread.Start();
+
+                    return $"{{\"converting\":true,\"name\":\"{EscapeJson(safeBase)}\",\"source\":\"{EscapeJson(safeFileName)}\"}}";
+                }
+                else
+                {
+                    // No convert script found — tell user to run manually
+                    Melon<Core>.Logger.Warning("[WebConfig] convert_music.sh not found — manual conversion needed");
+                    return $"{{\"error\":\"File saved to CustomBGM/{EscapeJson(safeFileName)} but automatic conversion is not available. Run manually: {EscapeJson(manualCmd)}\"}}";
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -1123,6 +1198,248 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
         return -1;
     }
 
+    // ── Audio conversion support ───────────────────────────────
+
+    private class ConversionStatus
+    {
+        public string SourcePath;
+        public string HcaName;
+        public string ManualCmd;
+        public DateTime StartedAt;
+        public bool Done;
+        public bool Success;
+        public string Error;
+        public string HcaPath; // relative path if successful
+        public long HcaSize;
+    }
+
+    private static readonly Dictionary<string, ConversionStatus> _conversions = new();
+
+    /// <summary>
+    /// Locate the convert_music.sh script. Searches relative to the game directory
+    /// and common project paths.
+    /// </summary>
+    private static string FindConvertScript()
+    {
+        // Try common locations
+        var candidates = new List<string>();
+
+        // Relative to game's StreamingAssets (mod project may be alongside)
+        try
+        {
+            string streamingAssets = UnityEngine.Application.streamingAssetsPath;
+            if (!string.IsNullOrEmpty(streamingAssets))
+            {
+                // Walk up from StreamingAssets to find the project
+                string gameDir = Path.GetDirectoryName(Path.GetDirectoryName(streamingAssets));
+                if (gameDir != null)
+                    candidates.Add(Path.Combine(gameDir, "scripts", "convert_music.sh"));
+            }
+        }
+        catch { }
+
+        // Common dev paths
+        string home = Environment.GetEnvironmentVariable("HOME") ?? "";
+        candidates.Add(Path.Combine(home, "projects", "bravely-default-rm", "scripts", "convert_music.sh"));
+        candidates.Add(Path.Combine(home, "projects", "bravely-default-mod", "scripts", "convert_music.sh"));
+
+        // Check BDFFHD_MOD_DIR env var
+        string modDir = Environment.GetEnvironmentVariable("BDFFHD_MOD_DIR");
+        if (!string.IsNullOrEmpty(modDir))
+            candidates.Add(Path.Combine(modDir, "scripts", "convert_music.sh"));
+
+        foreach (var path in candidates)
+        {
+            if (File.Exists(path))
+                return path;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Run convert_music.sh in a background thread and update ConversionStatus.
+    /// </summary>
+    private static void RunConversion(string key, string scriptPath, string sourcePath, string bgmDir)
+    {
+        ConversionStatus status;
+        lock (_conversions)
+        {
+            if (!_conversions.TryGetValue(key, out status)) return;
+        }
+
+        try
+        {
+            Melon<Core>.Logger.Msg($"[WebConfig] Starting conversion: {Path.GetFileName(sourcePath)}");
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = "/bin/bash",
+                Arguments = $"-c '{scriptPath} \"{sourcePath}\"'",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            // Set environment so the script knows where StreamingAssets is
+            try
+            {
+                string streamingAssets = UnityEngine.Application.streamingAssetsPath;
+                if (!string.IsNullOrEmpty(streamingAssets))
+                    psi.EnvironmentVariables["BDFFHD_STREAMING_ASSETS"] = Path.GetDirectoryName(streamingAssets) != null
+                        ? Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(streamingAssets)) ?? "", "BDFFHD_Data", "StreamingAssets")
+                        : streamingAssets;
+            }
+            catch { }
+
+            using var proc = Process.Start(psi);
+            if (proc == null)
+            {
+                status.Done = true;
+                status.Error = "Failed to start conversion process";
+                return;
+            }
+
+            string stdout = proc.StandardOutput.ReadToEnd();
+            string stderr = proc.StandardError.ReadToEnd();
+
+            proc.WaitForExit(120_000); // 2 minute timeout
+
+            if (!proc.HasExited)
+            {
+                try { proc.Kill(); } catch { }
+                status.Done = true;
+                status.Error = "Conversion timed out (2 minutes)";
+                Melon<Core>.Logger.Warning($"[WebConfig] Conversion timed out for {key}");
+                return;
+            }
+
+            if (proc.ExitCode == 0)
+            {
+                // Check if the HCA file was created
+                string hcaPath = Path.Combine(bgmDir, status.HcaName);
+                if (File.Exists(hcaPath))
+                {
+                    status.Done = true;
+                    status.Success = true;
+                    status.HcaPath = $"CustomBGM/{status.HcaName}";
+                    status.HcaSize = new FileInfo(hcaPath).Length;
+                    Melon<Core>.Logger.Msg($"[WebConfig] Conversion successful: {status.HcaPath} ({status.HcaSize} bytes)");
+                }
+                else
+                {
+                    status.Done = true;
+                    status.Error = "Conversion script succeeded but HCA file not found in CustomBGM/";
+                    Melon<Core>.Logger.Warning($"[WebConfig] Conversion output not found: {hcaPath}");
+                }
+            }
+            else
+            {
+                status.Done = true;
+                string errMsg = !string.IsNullOrWhiteSpace(stderr) ? stderr.Trim() : stdout.Trim();
+                if (errMsg.Length > 500) errMsg = errMsg.Substring(0, 500) + "...";
+                status.Error = $"Conversion failed (exit {proc.ExitCode}): {errMsg}";
+                Melon<Core>.Logger.Warning($"[WebConfig] Conversion failed for {key}: exit {proc.ExitCode}");
+            }
+        }
+        catch (Exception ex)
+        {
+            status.Done = true;
+            status.Error = $"Conversion error: {ex.Message}";
+            Melon<Core>.Logger.Warning($"[WebConfig] Conversion exception for {key}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// GET /music/convert-status?name=xxx - Poll conversion progress.
+    /// </summary>
+    private static string HandleConvertStatus(HttpListenerRequest request)
+    {
+        string name = request.QueryString["name"];
+        if (string.IsNullOrWhiteSpace(name))
+            return "{\"done\":true,\"error\":\"Missing name parameter\"}";
+
+        ConversionStatus status;
+        lock (_conversions)
+        {
+            if (!_conversions.TryGetValue(name, out status))
+                return "{\"done\":true,\"error\":\"No conversion found for this name\"}";
+        }
+
+        if (!status.Done)
+            return $"{{\"done\":false,\"manual_cmd\":\"{EscapeJson(status.ManualCmd)}\"}}";
+
+        if (status.Success)
+        {
+            // Clean up tracking entry
+            lock (_conversions) { _conversions.Remove(name); }
+            return $"{{\"done\":true,\"success\":true,\"path\":\"{EscapeJson(status.HcaPath)}\",\"size\":{status.HcaSize}}}";
+        }
+        else
+        {
+            lock (_conversions) { _conversions.Remove(name); }
+            return $"{{\"done\":true,\"error\":\"{EscapeJson(status.Error)}\",\"manual_cmd\":\"{EscapeJson(status.ManualCmd)}\"}}";
+        }
+    }
+
+    private static string HandleConvertFromPath(HttpListenerRequest request)
+    {
+        try
+        {
+            string body;
+            using (var sr = new System.IO.StreamReader(request.InputStream, request.ContentEncoding))
+                body = sr.ReadToEnd();
+
+            // Parse path= from form data
+            string filePath = null;
+            foreach (var pair in body.Split('&'))
+            {
+                var parts = pair.Split(new[] { '=' }, 2);
+                if (parts.Length == 2 && Uri.UnescapeDataString(parts[0].Trim()) == "path")
+                    filePath = Uri.UnescapeDataString(parts[1].Trim());
+            }
+
+            if (string.IsNullOrWhiteSpace(filePath))
+                return "{\"error\":\"No path provided\"}";
+
+            // Convert Wine path to Linux path if needed
+            if (filePath.StartsWith("Z:\\") || filePath.StartsWith("Z:/"))
+                filePath = filePath.Substring(2).Replace('\\', '/');
+
+            if (!File.Exists(filePath))
+                return $"{{\"error\":\"File not found: {EscapeJson(filePath)}\"}}";
+
+            string name = Path.GetFileNameWithoutExtension(filePath);
+            string ext = Path.GetExtension(filePath).ToLowerInvariant();
+
+            if (ext == ".hca")
+            {
+                // Just copy it
+                string dest = Path.Combine(CustomBgmDir, Path.GetFileName(filePath));
+                File.Copy(filePath, dest, true);
+                return $"{{\"success\":true,\"path\":\"CustomBGM/{EscapeJson(Path.GetFileName(filePath))}\",\"size\":{new FileInfo(dest).Length}}}";
+            }
+
+            // Start conversion
+            string scriptPath = FindConvertScript();
+            if (scriptPath == null)
+                return $"{{\"error\":\"convert_music.sh not found\",\"manual_cmd\":\"./scripts/convert_music.sh \\\"{EscapeJson(filePath)}\\\"\"}}";
+
+            var status = new ConversionStatus { ManualCmd = $"{scriptPath} \"{filePath}\"" };
+            lock (_conversions) { _conversions[name] = status; }
+
+            var n = name; var sp = scriptPath; var fp = filePath; var bd = CustomBgmDir;
+            new System.Threading.Thread(() => RunConversion(n, sp, fp, bd)) { IsBackground = true }.Start();
+
+            return $"{{\"converting\":true,\"name\":\"{EscapeJson(name)}\"}}";
+        }
+        catch (Exception ex)
+        {
+            return $"{{\"error\":\"{EscapeJson(ex.Message)}\"}}";
+        }
+    }
+
     // ── Settings ────────────────────────────────────────────────
 
     private static string HandleSettingsGet(string messageHtml = null)
@@ -1130,7 +1447,7 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
         string msgBlock = messageHtml ?? "";
 
         // Helper to build a checkbox input
-        string Checkbox(string name, bool value, string label, string hint = null)
+        string Checkbox(string name, bool value, string label, string hint = "")
         {
             string chk = value ? "checked" : "";
             string hintHtml = hint != null ? $"<span class=\"setting-hint\">{WebUtility.HtmlEncode(hint)}</span>" : "";
