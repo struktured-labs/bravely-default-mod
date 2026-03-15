@@ -148,9 +148,9 @@ public static unsafe class NativeSpeedWalkPatch
         // AUTO/RUN/150    → 6.0x  "Insanely Fast"
         return _currentMode switch
         {
-            3 => 0.5f,   // WALK50 → slow (half speed, useful for precision)
-            2 => 1.0f,   // WALK100 → normal (no boost)
-            _ => 2.5f,   // AUTO, FIXED_RUN, WALK150 → fast
+            3 => 0.6f,   // WALK50 → slow
+            2 => 1.25f,  // WALK100 → slightly faster than vanilla
+            _ => 3.0f,   // AUTO, FIXED_RUN, WALK150 → fast (+25% from 2.5)
         };
     }
 

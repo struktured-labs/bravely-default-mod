@@ -140,11 +140,27 @@ public static unsafe class NativeTacticsMenuPatch
     }
 
     /// <summary>
+    /// Character names for display. Slot 0-3 map to the party order.
+    /// </summary>
+    private static readonly string[] CharacterSlotNames = { "Tiz", "Agnes", "Ringabel", "Edea" };
+
+    /// <summary>
     /// Read CursorIndex from the BtlGUIAutoWindow instance (offset 0x98).
     /// </summary>
     private static int ReadCursorIndex(nint instance)
     {
         return *(int*)(instance + 0x98);
+    }
+
+    /// <summary>
+    /// Read m_HoldingCommand from the BtlGUIAutoWindow instance (offset 0xB8).
+    /// This is the tactic slot index (0-5) that is currently selected.
+    /// Slots 0-3 map to party characters; we use this as the character index.
+    /// Returns -1 if no slot is selected.
+    /// </summary>
+    private static int ReadHoldingCommand(nint instance)
+    {
+        return *(int*)(instance + 0xB8);
     }
 
     /// <summary>
@@ -178,11 +194,12 @@ public static unsafe class NativeTacticsMenuPatch
     /// <summary>
     /// The hook intercepts the original function. We watch for the confirm action
     /// when CursorIndex == 4 (Change Name). Instead of letting the original code
-    /// enter the rename flow (AutoRenameMenuPhase), we cycle profiles and show
-    /// a brief text overlay.
+    /// enter the rename flow (AutoRenameMenuPhase), we cycle the per-character profile
+    /// for the currently selected tactic slot and show "CharName: ProfileName".
     ///
     /// Strategy: Let the original run. If it transitions to AutoRenameMenuPhase,
-    /// we revert the phase and cycle the profile instead.
+    /// we revert the phase and cycle the per-character profile instead.
+    /// The tactic slot index (m_HoldingCommand at +0xB8) maps to a character slot (0-3).
     /// </summary>
     private static void UpdateAutoSubMenu_Hook(nint instance, float delta, nint methodInfo)
     {
@@ -203,18 +220,46 @@ public static unsafe class NativeTacticsMenuPatch
                 // Revert the phase back to AutoSubMenuPhase so the rename flow doesn't proceed
                 WritePhase(22);
 
-                // Cycle to next profile
                 var engine = NativeAutoBattlePatch.RuleEngine;
-                string newProfile = engine.CycleProfile();
 
-                if (_logCount < MaxLogLines)
+                // Read which tactic slot is selected — maps to character index
+                int tacticSlot = ReadHoldingCommand(instance);
+                int charIndex = (tacticSlot >= 0 && tacticSlot < 4) ? tacticSlot : -1;
+
+                string displayText;
+                if (charIndex >= 0)
                 {
-                    Melon<Core>.Logger.Msg($"[TacticsMenu] Cycled to profile: {newProfile}");
-                    _logCount++;
+                    // Cycle the profile for this specific character
+                    string newProfile = engine.CycleProfileForCharacter(charIndex);
+                    string charName = charIndex < CharacterSlotNames.Length
+                        ? CharacterSlotNames[charIndex]
+                        : $"Slot {charIndex}";
+                    displayText = $"{charName}: {newProfile}";
+
+                    if (_logCount < MaxLogLines)
+                    {
+                        Melon<Core>.Logger.Msg($"[TacticsMenu] Slot {charIndex} ({charName}) -> profile: {newProfile}");
+                        _logCount++;
+                    }
+                }
+                else
+                {
+                    // Slot out of range (5+) — cycle the global default profile
+                    string newProfile = engine.CycleProfile();
+                    displayText = $"Default: {newProfile}";
+
+                    if (_logCount < MaxLogLines)
+                    {
+                        Melon<Core>.Logger.Msg($"[TacticsMenu] Global profile cycled to: {newProfile}");
+                        _logCount++;
+                    }
                 }
 
-                // Show the profile name using SetDialogText if we have it
-                ShowProfileName(instance, newProfile);
+                // Save updated assignments to YAML
+                AutoBattle.ProfileConfig.SaveFromEngine(NativeAutoBattlePatch.ConfigPath, engine);
+
+                // Show the profile name using SetDialogText
+                ShowProfileText(instance, displayText);
             }
         }
         catch (Exception ex)
@@ -230,9 +275,10 @@ public static unsafe class NativeTacticsMenuPatch
     }
 
     /// <summary>
-    /// Show the profile name by calling the game's DialogOpen + SetDialogText.
+    /// Show arbitrary text by calling the game's DialogOpen + SetDialogText.
+    /// Used to display per-character profile assignments like "Tiz: Attack 4x".
     /// </summary>
-    private static void ShowProfileName(nint instance, string profileName)
+    private static void ShowProfileText(nint instance, string displayText)
     {
         if (_setDialogTextPtr == 0) return;
 
@@ -255,7 +301,6 @@ public static unsafe class NativeTacticsMenuPatch
             }
 
             // Create IL2CPP string for the display text
-            string displayText = $"Profile: {profileName}";
             var il2cppStr = Il2CppInterop.Runtime.IL2CPP.ManagedStringToIl2Cpp(displayText);
 
             // Call SetDialogText(instance, text, selVisible=0, methodInfo)
@@ -272,7 +317,7 @@ public static unsafe class NativeTacticsMenuPatch
         {
             if (_logCount < MaxLogLines)
             {
-                Melon<Core>.Logger.Warning($"[TacticsMenu] ShowProfileName failed: {ex.Message}");
+                Melon<Core>.Logger.Warning($"[TacticsMenu] ShowProfileText failed: {ex.Message}");
                 _logCount++;
             }
         }

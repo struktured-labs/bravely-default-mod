@@ -408,6 +408,74 @@ public class RuleEngine
             ? ProfileNames[ActiveProfileIndex]
             : "(none)";
 
+    /// <summary>
+    /// Per-character profile index tracking for cycling in the UI.
+    /// Mirrors <see cref="CharacterProfiles"/> but tracks which index in <see cref="ProfileNames"/>
+    /// each character slot is currently set to.
+    /// </summary>
+    private readonly int[] _characterProfileIndices = new int[4];
+
+    /// <summary>
+    /// Initialize per-character profile indices from the current CharacterProfiles assignments.
+    /// Call after LoadInto populates CharacterProfiles.
+    /// </summary>
+    public void SyncCharacterProfileIndices()
+    {
+        for (int i = 0; i < _characterProfileIndices.Length; i++)
+        {
+            var profile = CharacterProfiles[i];
+            if (profile != null && ProfileNames.Contains(profile.Name))
+            {
+                _characterProfileIndices[i] = ProfileNames.IndexOf(profile.Name);
+            }
+            else
+            {
+                // Default to the active profile index
+                _characterProfileIndices[i] = ActiveProfileIndex;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Cycle the profile for a specific character slot (0-3).
+    /// Returns the new profile name for that character.
+    /// </summary>
+    public string CycleProfileForCharacter(int charIndex)
+    {
+        if (ProfileNames.Count == 0) return "(none)";
+        if (charIndex < 0 || charIndex >= _characterProfileIndices.Length) return "(none)";
+
+        _characterProfileIndices[charIndex] = (_characterProfileIndices[charIndex] + 1) % ProfileNames.Count;
+        var name = ProfileNames[_characterProfileIndices[charIndex]];
+        if (AllProfiles.TryGetValue(name, out var profile))
+            CharacterProfiles[charIndex] = profile;
+        return name;
+    }
+
+    /// <summary>
+    /// Get the profile name currently assigned to a character slot.
+    /// </summary>
+    public string GetProfileNameForCharacter(int charIndex)
+    {
+        if (charIndex < 0 || charIndex >= CharacterProfiles.Length) return "(default)";
+        var profile = CharacterProfiles[charIndex];
+        return profile?.Name ?? DefaultProfile?.Name ?? "(none)";
+    }
+
+    /// <summary>
+    /// Get the current assignments as an ordered list of profile names (for YAML serialization).
+    /// </summary>
+    public List<string> GetAssignmentsList()
+    {
+        var result = new List<string>();
+        for (int i = 0; i < CharacterProfiles.Length; i++)
+        {
+            var profile = CharacterProfiles[i];
+            result.Add(profile?.Name ?? DefaultProfile?.Name ?? "Default");
+        }
+        return result;
+    }
+
     public RuleEngine()
     {
         DefaultProfile = CreateDefaultProfile();

@@ -103,6 +103,16 @@ public static unsafe class NativeBPPatch
     private const byte OLD_Brave_ActionCap = 0x04;
     private const byte NEW_Brave_ActionCap = 0x0A;
 
+    // === IsEnableBraveAtSuperBrave — SECOND brave gate used when SuperBrave mode is active ===
+    // _pushCmdBrave checks IsSuperBraveMode; if true, calls IsEnableBraveAtSuperBrave instead of IsEnableBrave.
+    // Function @ VA 0x1805BBE60 (RVA 0x5BBE60)
+    //   func+0x145: 83 F8 F7  cmp eax, -9    ; BP floor (already -9, no patch needed)
+    //   func+0x14E: 83 F9 04  cmp ecx, 4     ; action cap — the 0x04 byte is at func+0x150
+    // RVA of the 0x04 byte: 0x5BBE60 + 0x150 = 0x5BBFB0
+    private const long RVA_SuperBrave_ActionCap = 0x5BBFB0;
+    private const byte OLD_SuperBrave_ActionCap = 0x04;
+    private const byte NEW_SuperBrave_ActionCap = 0x0A;
+
     // ── Public entry point ──────────────────────────────────────────
 
     public static void Apply()
@@ -162,8 +172,8 @@ public static unsafe class NativeBPPatch
             patched += PatchByte(dllBase, RVA_SetBP_Floor, OLD_SetBP_Floor, NEW_SetBP_Floor,
                 "SetBP floor (-4→-9)") ? 1 : 0;
 
-            // IsEnableBrave: keep vanilla action cap (4) and BP floor (-5)
-            // BP accumulates to 9 but actions per turn stays at 4
+            // IsEnableBrave: keep vanilla 4 actions per turn
+            // BP accumulates to 9 but actions stay at 4
 
             Melon<Core>.Logger.Msg($"[BP-Patch] Memory patches applied: {patched}/4");
         }
@@ -321,7 +331,9 @@ public static unsafe class NativeBPPatch
         }
     }
 
-    // ── IsEnableBrave hook (passthrough — memory patch handles constants) ──
+    // ── IsEnableBrave hook — memory patches raise the cap; hook is passthrough ──
+    // The action cap was patched from 4→10 in BOTH IsEnableBrave and IsEnableBraveAtSuperBrave.
+    // _pushCmdBrave dispatches to one or the other based on IsSuperBraveMode.
 
     private static System.Collections.Generic.Dictionary<int, int> _braveCount = new();
 
@@ -332,13 +344,13 @@ public static unsafe class NativeBPPatch
     {
         try
         {
-            // Let original decide first
+            // Let the original (memory-patched) function decide.
+            // The action cap constant has been patched from 4→10 in the function body,
+            // so the original will return false once the character has 10 queued actions.
             var orig = _braveHook.Trampoline(partyindex, pBtlLayoutCtrl, methodInfo);
 
             if (!Core.BpModEnabled.Value) return orig;
 
-            // Cap at vanilla 4 actions (3 braves + 1 default)
-            // BP can accumulate to 9 but actions per turn stays at 4
             return orig;
         }
         catch { return 0; }

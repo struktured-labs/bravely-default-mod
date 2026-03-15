@@ -158,6 +158,138 @@ public static class ProfileConfig
     }
 
     // ──────────────────────────────────────────────────────────
+    // Validation
+    // ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Validate a YAML config string without applying it. Returns a list of errors.
+    /// Empty list means the config is valid.
+    /// </summary>
+    public static List<string> ValidateConfig(string yaml)
+    {
+        var errors = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(yaml))
+        {
+            errors.Add("Config is empty.");
+            return errors;
+        }
+
+        AutoBattleConfigDto dto;
+        try
+        {
+            dto = YamlDeserializer.Deserialize<AutoBattleConfigDto>(yaml);
+        }
+        catch (Exception ex)
+        {
+            errors.Add($"YAML parse error: {ex.Message}");
+            return errors;
+        }
+
+        if (dto == null)
+        {
+            errors.Add("YAML deserialized to null (file may be empty or malformed).");
+            return errors;
+        }
+
+        if (dto.Profiles == null || dto.Profiles.Count == 0)
+        {
+            errors.Add("No profiles defined. Add at least one profile under 'profiles:'.");
+            return errors;
+        }
+
+        // Validate each profile's rules
+        foreach (var (profileName, ruleLines) in dto.Profiles)
+        {
+            if (ruleLines == null || ruleLines.Count == 0)
+            {
+                // Empty profile is valid (means "use default behavior")
+                continue;
+            }
+
+            for (int i = 0; i < ruleLines.Count; i++)
+            {
+                var line = ruleLines[i];
+                try
+                {
+                    ParseRule(line);
+                }
+                catch (Exception ex)
+                {
+                    errors.Add($"Profile '{profileName}', rule {i + 1} (\"{line}\"): {ex.Message}");
+                }
+            }
+        }
+
+        // Validate activeProfile references an existing profile
+        if (!string.IsNullOrEmpty(dto.ActiveProfile) && !dto.Profiles.ContainsKey(dto.ActiveProfile))
+        {
+            errors.Add($"activeProfile '{dto.ActiveProfile}' does not match any defined profile name.");
+        }
+
+        // Validate assignments reference existing profiles
+        if (dto.Assignments != null)
+        {
+            for (int i = 0; i < dto.Assignments.Count; i++)
+            {
+                var assignment = dto.Assignments[i];
+                if (!string.IsNullOrWhiteSpace(assignment) && !dto.Profiles.ContainsKey(assignment))
+                {
+                    errors.Add($"Assignment slot {i} references unknown profile '{assignment}'.");
+                }
+            }
+        }
+
+        return errors;
+    }
+
+    /// <summary>
+    /// Validate a YAML config and return a structured summary of what parsed successfully.
+    /// </summary>
+    public static (List<string> errors, List<string> summaries) ValidateConfigDetailed(string yaml)
+    {
+        var errors = ValidateConfig(yaml);
+        var summaries = new List<string>();
+
+        if (errors.Count > 0 && errors[0].StartsWith("YAML parse error"))
+            return (errors, summaries);
+
+        try
+        {
+            var dto = YamlDeserializer.Deserialize<AutoBattleConfigDto>(yaml);
+            if (dto?.Profiles != null)
+            {
+                foreach (var (profileName, ruleLines) in dto.Profiles)
+                {
+                    int ruleCount = ruleLines?.Count ?? 0;
+                    int parsed = 0;
+                    if (ruleLines != null)
+                    {
+                        foreach (var line in ruleLines)
+                        {
+                            try { ParseRule(line); parsed++; } catch { }
+                        }
+                    }
+                    summaries.Add($"Profile '{profileName}': {parsed}/{ruleCount} rules OK");
+                }
+
+                if (dto.Assignments != null && dto.Assignments.Count > 0)
+                {
+                    var charNames = new[] { "Tiz", "Agnes", "Ringabel", "Edea" };
+                    for (int i = 0; i < dto.Assignments.Count && i < 4; i++)
+                    {
+                        var name = i < charNames.Length ? charNames[i] : $"Slot {i}";
+                        summaries.Add($"{name}: {dto.Assignments[i]}");
+                    }
+                }
+            }
+        }
+        catch { /* already reported in errors */ }
+
+        return (errors, summaries);
+    }
+
+    // ──────────────────────────────────────────────────────────
     // DSL Parser
     // ──────────────────────────────────────────────────────────
 
@@ -461,6 +593,41 @@ public static class ProfileConfig
                     Melon<Core>.Logger.Warning($"[AutoBattle] Slot {i} references unknown profile '{profileName}', using default");
                 }
             }
+        }
+
+        // Sync the per-character cycling indices to match loaded assignments
+        engine.SyncCharacterProfileIndices();
+    }
+
+    /// <summary>
+    /// Save the current engine state back to a YAML file.
+    /// Preserves profiles, updates assignments from the engine's current per-character profiles.
+    /// </summary>
+    public static void SaveFromEngine(string path, RuleEngine engine)
+    {
+        try
+        {
+            // Read existing config to preserve profile DSL strings
+            AutoBattleConfigDto dto;
+            if (File.Exists(path))
+            {
+                string yaml = File.ReadAllText(path);
+                dto = YamlDeserializer.Deserialize<AutoBattleConfigDto>(yaml) ?? GetDefaultConfig();
+            }
+            else
+            {
+                dto = GetDefaultConfig();
+            }
+
+            // Update assignments from engine state
+            dto.ActiveProfile = engine.ActiveProfileName;
+            dto.Assignments = engine.GetAssignmentsList();
+
+            Save(path, dto);
+        }
+        catch (Exception ex)
+        {
+            Melon<Core>.Logger.Warning($"[AutoBattle] SaveFromEngine failed: {ex.Message}");
         }
     }
 }
