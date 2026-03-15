@@ -107,6 +107,7 @@ public class Core : MelonMod
             Patches.NativeSpeedWalkPatch.Apply();
         Patches.NativeAutoBattlePatch.Apply();
         Patches.NativeTacticsMenuPatch.Apply();
+        Patches.NativeJobSwapPatch.Apply();
         // Button swap disabled — use Steam Input controller config instead
         // Patches.NativeButtonSwapPatch.Apply();
         if (SpeedModEnabled.Value)
