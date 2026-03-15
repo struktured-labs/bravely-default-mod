@@ -240,16 +240,29 @@ public static class ProfileConfig
             Melon<Core>.Logger.Msg($"[AutoBattle] Profile '{name}': {profile.Rules.Count} rules");
         }
 
+        // Populate the engine's profile catalog for UI cycling
+        engine.AllProfiles.Clear();
+        engine.ProfileNames.Clear();
+        foreach (var (name, profile) in profiles)
+        {
+            engine.AllProfiles[name] = profile;
+            engine.ProfileNames.Add(name);
+        }
+
         // Set default profile
+        int activeIdx = 0;
         if (dto.ActiveProfile != null && profiles.TryGetValue(dto.ActiveProfile, out var defaultProfile))
         {
             engine.DefaultProfile = defaultProfile;
+            activeIdx = engine.ProfileNames.IndexOf(dto.ActiveProfile);
+            if (activeIdx < 0) activeIdx = 0;
         }
         else if (profiles.Count > 0)
         {
             engine.DefaultProfile = profiles.Values.First();
             Melon<Core>.Logger.Warning($"[AutoBattle] Active profile '{dto.ActiveProfile}' not found, using '{engine.DefaultProfile.Name}'");
         }
+        engine.ActiveProfileIndex = activeIdx;
 
         // Assign per-character profiles
         for (int i = 0; i < engine.CharacterProfiles.Length; i++)

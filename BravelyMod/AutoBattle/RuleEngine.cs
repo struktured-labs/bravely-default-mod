@@ -247,6 +247,43 @@ public class RuleEngine
     /// </summary>
     public RuleProfile DefaultProfile { get; set; }
 
+    /// <summary>
+    /// All loaded profiles by name (populated by ProfileConfig.LoadInto).
+    /// </summary>
+    public Dictionary<string, RuleProfile> AllProfiles { get; } = new();
+
+    /// <summary>
+    /// Ordered list of profile names for cycling in the UI.
+    /// </summary>
+    public List<string> ProfileNames { get; } = new();
+
+    /// <summary>
+    /// Index of the currently active profile within <see cref="ProfileNames"/>.
+    /// </summary>
+    public int ActiveProfileIndex { get; set; }
+
+    /// <summary>
+    /// Cycle to the next profile and return its name.
+    /// Also updates DefaultProfile to the newly selected profile.
+    /// </summary>
+    public string CycleProfile()
+    {
+        if (ProfileNames.Count == 0) return "(none)";
+        ActiveProfileIndex = (ActiveProfileIndex + 1) % ProfileNames.Count;
+        var name = ProfileNames[ActiveProfileIndex];
+        if (AllProfiles.TryGetValue(name, out var profile))
+            DefaultProfile = profile;
+        return name;
+    }
+
+    /// <summary>
+    /// Get the name of the current active profile.
+    /// </summary>
+    public string ActiveProfileName =>
+        ProfileNames.Count > 0 && ActiveProfileIndex < ProfileNames.Count
+            ? ProfileNames[ActiveProfileIndex]
+            : "(none)";
+
     public RuleEngine()
     {
         DefaultProfile = CreateDefaultProfile();

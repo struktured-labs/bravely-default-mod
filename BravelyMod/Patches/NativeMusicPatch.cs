@@ -1,84 +1,72 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using MelonLoader;
 using MelonLoader.NativeUtils;
+using MelonLoader.Utils;
 using Il2CppInterop.Runtime;
+using YamlDotNet.Serialization;
+using YamlDotNet.Serialization.NamingConventions;
 using CriPlayer = Il2CppCriWare.CriAtomExPlayer;
 
 namespace BravelyMod.Patches;
 
 /// <summary>
-/// Hooks BtlSoundManager.PlayBGM to replace bgmbtl_01 (normal battle music)
-/// with a custom HCA file played via CriAtomExPlayer.SetFile.
+/// Hooks BtlSoundManager.PlayBGM to replace BGM cues with custom HCA files.
+/// Config: UserData/BravelyMod_Music.yaml
 /// </summary>
 public static unsafe class NativeMusicPatch
 {
-    // Target cue name to intercept
-    private const string TARGET_CUE = "bgmbtl_01";
+    public class MusicConfig
+    {
+        [YamlMember(Alias = "overrides")]
+        public Dictionary<string, string> Overrides { get; set; } = new();
+    }
 
-    // Path relative to StreamingAssets
-    private const string CUSTOM_HCA_RELATIVE = "CustomBGM/battle-melody-2.hca";
+    private static string ConfigPath =>
+        System.IO.Path.Combine(MelonEnvironment.UserDataDirectory, "BravelyMod_Music.yaml");
 
-    // BtlSoundManager.PlayBGM(string _pFilename, bool _loopFlag, int _fadeFrame) -> SoundInstance
-    // IL2CPP native: nint(nint instance, nint il2cppString, byte loopFlag, int fadeFrame, nint methodInfo)
+    // cue name -> absolute HCA path
+    private static Dictionary<string, string> _overrides = new();
+
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate nint d_PlayBGM(nint instance, nint pFilename, byte loopFlag, int fadeFrame, nint methodInfo);
 
     private static NativeHook<d_PlayBGM> _playBGMHook;
     private static d_PlayBGM _pinnedDelegate;
 
-    // Our custom CriAtomExPlayer for file-based playback
     private static CriPlayer _customPlayer;
     private static bool _customPlaying;
     private static int _logCount;
-
-    // Resolved absolute path to the HCA file
-    private static string _hcaAbsolutePath;
 
     public static void Apply()
     {
         try
         {
-            // Resolve the absolute path to the HCA file
-            _hcaAbsolutePath = System.IO.Path.Combine(
-                UnityEngine.Application.streamingAssetsPath,
-                CUSTOM_HCA_RELATIVE);
+            LoadConfig();
 
-            if (!System.IO.File.Exists(_hcaAbsolutePath))
+            if (_overrides.Count == 0)
             {
-                Melon<Core>.Logger.Warning($"[Music] HCA file not found: {_hcaAbsolutePath}");
+                Melon<Core>.Logger.Msg("[Music] No overrides configured");
                 return;
             }
-
-            Melon<Core>.Logger.Msg($"[Music] Custom HCA: {_hcaAbsolutePath}");
 
             // Hook BtlSoundManager.PlayBGM
             var field = typeof(Il2Cpp.BtlSoundManager).GetField(
                 "NativeMethodInfoPtr_PlayBGM_Public_SoundInstance_String_Boolean_Int32_0",
                 System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
 
-            if (field == null)
-            {
-                Melon<Core>.Logger.Warning("[Music] PlayBGM method info field not found");
-                return;
-            }
+            if (field == null) { Melon<Core>.Logger.Warning("[Music] PlayBGM field not found"); return; }
 
             var methodInfoPtr = (nint)field.GetValue(null);
-            if (methodInfoPtr == 0)
-            {
-                Melon<Core>.Logger.Warning("[Music] PlayBGM method info ptr is null");
-                return;
-            }
+            if (methodInfoPtr == 0) return;
 
             var nativePtr = *(nint*)methodInfoPtr;
             Melon<Core>.Logger.Msg($"[Music] BtlSoundManager.PlayBGM native @ 0x{nativePtr:X}");
 
             _pinnedDelegate = PlayBGM_Hook;
-            _playBGMHook = new NativeHook<d_PlayBGM>(
-                nativePtr,
-                Marshal.GetFunctionPointerForDelegate(_pinnedDelegate));
+            _playBGMHook = new NativeHook<d_PlayBGM>(nativePtr, Marshal.GetFunctionPointerForDelegate(_pinnedDelegate));
             _playBGMHook.Attach();
-
             Melon<Core>.Logger.Msg("[Music] PlayBGM hook attached!");
         }
         catch (Exception ex)
@@ -87,72 +75,105 @@ public static unsafe class NativeMusicPatch
         }
     }
 
-    private static nint PlayBGM_Hook(nint instance, nint pFilename, byte loopFlag, int fadeFrame, nint methodInfo)
+    private static void LoadConfig()
     {
+        var streamingAssets = UnityEngine.Application.streamingAssetsPath;
+
         try
         {
-            // Read the Il2Cpp string to get the filename
-            string filename = null;
-            if (pFilename != 0)
+            if (System.IO.File.Exists(ConfigPath))
             {
-                filename = IL2CPP.Il2CppStringToManaged(pFilename);
-            }
-
-            _logCount++;
-            if (_logCount <= 10)
-                Melon<Core>.Logger.Msg($"[Music] PlayBGM called: '{filename}' loop={loopFlag} fade={fadeFrame}");
-
-            if (filename != null && filename.Contains(TARGET_CUE))
-            {
-                Melon<Core>.Logger.Msg($"[Music] Intercepting {TARGET_CUE} -> custom HCA");
-                return PlayCustomHCA(loopFlag != 0, fadeFrame);
+                var yaml = System.IO.File.ReadAllText(ConfigPath);
+                var deserializer = new DeserializerBuilder()
+                    .WithNamingConvention(CamelCaseNamingConvention.Instance)
+                    .IgnoreUnmatchedProperties()
+                    .Build();
+                var config = deserializer.Deserialize<MusicConfig>(yaml);
+                if (config?.Overrides != null)
+                {
+                    foreach (var kv in config.Overrides)
+                    {
+                        var absPath = System.IO.Path.Combine(streamingAssets, kv.Value);
+                        if (System.IO.File.Exists(absPath))
+                        {
+                            _overrides[kv.Key] = absPath;
+                            Melon<Core>.Logger.Msg($"[Music] Override: {kv.Key} -> {kv.Value}");
+                        }
+                        else
+                        {
+                            Melon<Core>.Logger.Warning($"[Music] HCA not found: {absPath}");
+                        }
+                    }
+                }
             }
             else
             {
-                // Not our target -- stop custom player if it was playing, then call original
-                StopCustomPlayer();
-                return _playBGMHook.Trampoline(instance, pFilename, loopFlag, fadeFrame, methodInfo);
+                // Create default config
+                var config = new MusicConfig
+                {
+                    Overrides = new Dictionary<string, string>
+                    {
+                        ["bgmbtl_01"] = "CustomBGM/battle-melody-2.hca"
+                    }
+                };
+                var serializer = new SerializerBuilder()
+                    .WithNamingConvention(CamelCaseNamingConvention.Instance)
+                    .Build();
+                System.IO.File.WriteAllText(ConfigPath, serializer.Serialize(config));
+                Melon<Core>.Logger.Msg($"[Music] Created default config: {ConfigPath}");
+
+                // Apply default
+                var absPath = System.IO.Path.Combine(streamingAssets, "CustomBGM/battle-melody-2.hca");
+                if (System.IO.File.Exists(absPath))
+                    _overrides["bgmbtl_01"] = absPath;
             }
         }
         catch (Exception ex)
         {
-            Melon<Core>.Logger.Warning($"[Music] PlayBGM hook error: {ex.Message}");
+            Melon<Core>.Logger.Warning($"[Music] Config load failed: {ex.Message}");
+        }
+    }
+
+    private static nint PlayBGM_Hook(nint instance, nint pFilename, byte loopFlag, int fadeFrame, nint methodInfo)
+    {
+        try
+        {
+            string filename = pFilename != 0 ? IL2CPP.Il2CppStringToManaged(pFilename) : null;
+
+            _logCount++;
+            if (_logCount <= 10)
+                Melon<Core>.Logger.Msg($"[Music] PlayBGM: '{filename}' loop={loopFlag}");
+
+            if (filename != null && _overrides.TryGetValue(filename, out var hcaPath))
+            {
+                Melon<Core>.Logger.Msg($"[Music] Intercepting {filename} -> custom HCA");
+                return PlayCustomHCA(hcaPath);
+            }
+
+            StopCustomPlayer();
+            return _playBGMHook.Trampoline(instance, pFilename, loopFlag, fadeFrame, methodInfo);
+        }
+        catch (Exception ex)
+        {
+            Melon<Core>.Logger.Warning($"[Music] Hook error: {ex.Message}");
             try { return _playBGMHook.Trampoline(instance, pFilename, loopFlag, fadeFrame, methodInfo); }
             catch { return 0; }
         }
     }
 
-    private static nint PlayCustomHCA(bool loop, int fadeFrame)
+    private static nint PlayCustomHCA(string hcaPath)
     {
         try
         {
-            // Stop any existing custom playback
             StopCustomPlayer();
-
-            // Create a new CriAtomExPlayer with enough path buffer
-            // maxPath=256, maxPathStrings=1
             _customPlayer = new CriPlayer(256, 1);
+            if (_customPlayer == null || !_customPlayer.isAvailable) return 0;
 
-            if (_customPlayer == null || !_customPlayer.isAvailable)
-            {
-                Melon<Core>.Logger.Warning("[Music] Failed to create CriAtomExPlayer");
-                return 0;
-            }
-
-            // SetFile with null binder = load from filesystem
-            _customPlayer.SetFile(null, _hcaAbsolutePath);
-
-            // Set volume to match typical BGM level
+            _customPlayer.SetFile(null, hcaPath);
             _customPlayer.SetVolume(1.0f);
-
-            // Start playback
             var playback = _customPlayer.Start();
             _customPlaying = true;
-
-            Melon<Core>.Logger.Msg($"[Music] Custom HCA playback started (playback id={playback.id})");
-
-            // Return 0 (null SoundInstance) - the caller (BtlSoundManager) will store this
-            // in m_hDefaultBGM. A null is safe since the game checks for it.
+            Melon<Core>.Logger.Msg($"[Music] Custom playback started (id={playback.id})");
             return 0;
         }
         catch (Exception ex)
@@ -170,18 +191,15 @@ public static unsafe class NativeMusicPatch
             {
                 _customPlayer.Stop(false);
                 _customPlaying = false;
-                Melon<Core>.Logger.Msg("[Music] Stopped custom player");
             }
-
             if (_customPlayer != null)
             {
                 _customPlayer.Dispose();
                 _customPlayer = null;
             }
         }
-        catch (Exception ex)
+        catch
         {
-            Melon<Core>.Logger.Warning($"[Music] Error stopping custom player: {ex.Message}");
             _customPlayer = null;
             _customPlaying = false;
         }
