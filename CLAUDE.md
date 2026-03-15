@@ -47,3 +47,13 @@ steam steam://rungameid/2833580  # launch with MelonLoader
 - Check `MelonLoader/Latest.log` after each launch to verify mod loaded
 - Look for "BravelyMod initialized!" and "X Mods loaded" in the log
 - If patches fail, MelonLoader logs the exception — check for HarmonyException
+
+### Headless Testing (Xvfb + Vulkan on RTX 3090)
+- **Full test:** `./scripts/test_mod.sh` — restores save, launches on `:99`, validates all hooks, screenshots, reports pass/fail
+- **Headless launch only:** `./scripts/headless_launch.sh` — launches game on `:99` without fullscreen
+- **Vulkan confirmed working** on Xvfb with NVIDIA RTX 3090
+- Save backup at `tmp/save_backup/`, restored to Wine prefix before each test run
+- Save destination: `~/.steam/.../compatdata/2833580/pfx/drive_c/users/steamuser/Documents/My Games/BRAVELY DEFAULT/Steam/76561198080785161/`
+- Screenshots saved to `tmp/test_screenshots/`, results to `tmp/test_results/`
+- **Do NOT start Xvfb or launch headless while the user may be playing** — always ask first
+- Flags: `--no-xvfb` (reuse running Xvfb), `--skip-save-restore`, `--keep-alive`, `--timeout N`

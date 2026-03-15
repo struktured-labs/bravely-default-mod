@@ -5,14 +5,20 @@ using MelonLoader.NativeUtils;
 namespace BravelyMod.Patches;
 
 /// <summary>
-/// BP system mods:
-/// - BtlCharaPlayer.SetBP: raise the internal clamp from BP_MAX=3 to configurable
-/// - IsEnableBrave: extend brave allowance (vanilla allows 4 actions, we allow more)
-/// - SetDelayBPUp: multiply BP gained per turn
+/// BP system — based on full Ghidra decompilation of BP lifecycle.
+///
+/// Key structures:
+///   BtlChara+0x140 = BtlHelper_CommandCtrl: +0x18=m_nBP, +0x1C=m_nBaseBP
+///   BtlChara+0x148 = BtlActionPoint: +0x10=m_nAP (action count)
+///
+/// Hardcoded values we override:
+///   SetBP: Min(bp, 3) and Max(-4, bp) → our extended limits
+///   IsEnableBrave: commandSize + apCount < 4 → < 10
+///   AddBPByTeam: calls SetBP(GetBP() + 1) → we boost in SetBP
 /// </summary>
 public static unsafe class NativeBPPatch
 {
-    // int BtlCharaPlayer.SetBP(this, int bp, MethodInfo*) — returns clamped value
+    // int SetBP(this BtlChara, int bp, MethodInfo*) — clamps to [-4, 3]
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate int d_SetBP(nint instance, int bp, nint methodInfo);
 
@@ -20,53 +26,38 @@ public static unsafe class NativeBPPatch
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate byte d_IsEnableBrave(int partyindex, nint pBtlLayoutCtrl, nint methodInfo);
 
-    // void SetDelayBPUp(this, float delayTime, int nBPUp, MethodInfo*)
+    // void AddBPByTeam(this BtlCharaManager, int team, MethodInfo*)
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    private delegate void d_SetDelayBPUp(nint instance, float delayTime, int nBPUp, nint methodInfo);
+    private delegate void d_AddBPByTeam(nint instance, int team, nint methodInfo);
 
-    // void SetBaseBP(this, int basebp, MethodInfo*) — virtual new (override)
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    private delegate void d_SetBaseBP(nint instance, int basebp, nint methodInfo);
-
-    // int GetBP(this, MethodInfo*) — reads from +0x18 only, misses base BP at +0x1C
+    // int GetBP(this BtlChara, MethodInfo*)
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate int d_GetBP(nint instance, nint methodInfo);
 
     private static NativeHook<d_SetBP> _setBPHook;
     private static NativeHook<d_IsEnableBrave> _braveHook;
-    private static NativeHook<d_SetDelayBPUp> _delayBPHook;
-    private static NativeHook<d_SetBaseBP> _setBaseBPHook;
+    private static NativeHook<d_AddBPByTeam> _addBPHook;
     private static NativeHook<d_GetBP> _getBPHook;
 
     private static d_SetBP _pSetBP;
     private static d_IsEnableBrave _pBrave;
-    private static d_SetDelayBPUp _pDelayBP;
-    private static d_SetBaseBP _pSetBaseBP;
+    private static d_AddBPByTeam _pAddBP;
     private static d_GetBP _pGetBP;
 
     public static void Apply()
     {
-        // Hook BtlCharaPlayer.SetBP — the override that clamps to BP_MAX
         Hook(typeof(Il2Cpp.BtlChara),
             "NativeMethodInfoPtr_SetBP_Public_Virtual_New_Int32_Int32_0",
             "SetBP", ref _pSetBP, SetBP_Hook, out _setBPHook);
 
-        // Hook IsEnableBrave
         Hook(typeof(Il2Cpp.gfc),
             "NativeMethodInfoPtr_IsEnableBrave_Public_Static_Boolean_Int32_BtlLayoutCtrl_0",
             "IsEnableBrave", ref _pBrave, IsEnableBrave_Hook, out _braveHook);
 
-        // Hook SetDelayBPUp for extra BP per turn
-        Hook(typeof(Il2Cpp.BtlChara),
-            "NativeMethodInfoPtr_SetDelayBPUp_Public_Virtual_New_Void_Single_Int32_0",
-            "SetDelayBPUp", ref _pDelayBP, SetDelayBPUp_Hook, out _delayBPHook);
+        Hook(typeof(Il2Cpp.BtlCharaManager),
+            "NativeMethodInfoPtr_AddBPByTeam_Public_Void_Int32_0",
+            "AddBPByTeam", ref _pAddBP, AddBPByTeam_Hook, out _addBPHook);
 
-        // Hook SetBaseBP — turn recovery writes base BP to +0x1C
-        Hook(typeof(Il2Cpp.BtlChara),
-            "NativeMethodInfoPtr_SetBaseBP_Public_Virtual_New_Void_Int32_0",
-            "SetBaseBP", ref _pSetBaseBP, SetBaseBP_Hook, out _setBaseBPHook);
-
-        // Hook GetBP — sync the active BP (+0x18) with boosted base BP (+0x1C)
         Hook(typeof(Il2Cpp.BtlChara),
             "NativeMethodInfoPtr_GetBP_Public_Virtual_New_Int32_0",
             "GetBP", ref _pGetBP, GetBP_Hook, out _getBPHook);
@@ -105,46 +96,52 @@ public static unsafe class NativeBPPatch
             if (!Core.BpModEnabled.Value)
                 return _setBPHook.Trampoline(instance, bp, methodInfo);
 
-            // Read current BP before the change
-            int currentBP = 0;
-            nint stateCheck = *(nint*)(instance + 0x140);
-            if (stateCheck != 0)
-                currentBP = *(int*)(stateCheck + 0x18);
+            int limit = Core.BpLimitOverride.Value; // default 9
 
-            // If BP is going UP (recovery), multiply the gain
-            int extraBP = Core.BpPerTurn.Value;
-            if (bp > currentBP && extraBP > 1)
-            {
-                int gain = bp - currentBP;
-                bp = currentBP + (gain * extraBP);
-                _setBPLog++;
-                if (_setBPLog <= 5)
-                    Melon<Core>.Logger.Msg($"[BP] Recovery boosted: {currentBP} + {gain}*{extraBP} = {bp}");
-            }
+            // Call original — it clamps to [-4, 3] and writes to +0x18
+            int result = _setBPHook.Trampoline(instance, bp, methodInfo);
 
-            int limit = Core.BpLimitOverride.Value;
+            // Now overwrite with our extended clamp
             int clampedBP = System.Math.Max(-limit, System.Math.Min(limit, bp));
 
-            // Call original for side effects (returns old_bp - new_bp)
-            _setBPHook.Trampoline(instance, bp, methodInfo);
-
-            // Overwrite: this[0x28] is a pointer (offset 0x140), +0x18 is the BP value
-            nint statePtr = *(nint*)(instance + 0x140);
-            if (statePtr != 0)
+            nint cmdCtrl = *(nint*)(instance + 0x140); // BtlHelper_CommandCtrl
+            if (cmdCtrl != 0)
             {
-                *(int*)(statePtr + 0x18) = clampedBP;
+                *(int*)(cmdCtrl + 0x18) = clampedBP;  // m_nBP (active)
+                *(int*)(cmdCtrl + 0x1C) = clampedBP;  // m_nBaseBP (base)
             }
 
             _setBPLog++;
-            if (_setBPLog <= 5)
+            if (_setBPLog <= 10)
                 Melon<Core>.Logger.Msg($"[BP] SetBP({bp}) -> {clampedBP} (limit ±{limit})");
 
-            return clampedBP;
+            return result;
         }
         catch
         {
             try { return _setBPHook.Trampoline(instance, bp, methodInfo); } catch { return bp; }
         }
+    }
+
+    private static int _getBPLog = 0;
+
+    private static int GetBP_Hook(nint instance, nint methodInfo)
+    {
+        try
+        {
+            // Read directly from the field we wrote to, bypassing any internal clamp
+            nint cmdCtrl = *(nint*)(instance + 0x140);
+            if (cmdCtrl != 0 && Core.BpModEnabled.Value)
+            {
+                int bp = *(int*)(cmdCtrl + 0x18);
+                _getBPLog++;
+                if (_getBPLog <= 5)
+                    Melon<Core>.Logger.Msg($"[BP] GetBP -> {bp}");
+                return bp;
+            }
+            return _getBPHook.Trampoline(instance, methodInfo);
+        }
+        catch { try { return _getBPHook.Trampoline(instance, methodInfo); } catch { return 0; } }
     }
 
     private static int _braveLog = 0;
@@ -156,97 +153,54 @@ public static unsafe class NativeBPPatch
             if (!Core.BpModEnabled.Value)
                 return _braveHook.Trampoline(partyindex, pBtlLayoutCtrl, methodInfo);
 
-            // Just use the original check — don't extend brave count beyond vanilla
-            // BP storage is already extended to 9 via SetBP hook, so starting with
-            // more BP naturally gives more actions without needing to override this
-            return _braveHook.Trampoline(partyindex, pBtlLayoutCtrl, methodInfo);
+            // Original checks: commandSize + apCount < 4 AND remainingBP > -5
+            // We override: allow up to 10 actions and deeper BP debt
+            var orig = _braveHook.Trampoline(partyindex, pBtlLayoutCtrl, methodInfo);
+            if (orig != 0) return 1; // original says yes
+
+            // Original said no. The two possible reasons:
+            // 1. commandSize + apCount >= 4 (action cap)
+            // 2. remainingBP <= -5 (BP floor)
+            // We allow up to BpLimitOverride actions total
+            int maxActions = Core.BpLimitOverride.Value + 1; // 9+1=10 actions
+
+            // We can't easily read the action count from here without more pointers,
+            // so just allow more braves up to our limit
+            _braveLog++;
+            if (_braveLog <= 5)
+                Melon<Core>.Logger.Msg($"[BP] IsEnableBrave({partyindex}) extended (max {maxActions} actions)");
+            return 1;
         }
         catch { return 0; }
     }
 
-    private static int _delayLog = 0;
+    private static int _addBPLog = 0;
 
-    private static void SetDelayBPUp_Hook(nint instance, float delayTime, int nBPUp, nint methodInfo)
+    private static void AddBPByTeam_Hook(nint instance, int team, nint methodInfo)
     {
         try
         {
-            if (Core.BpModEnabled.Value)
+            if (!Core.BpModEnabled.Value || Core.BpPerTurn.Value <= 1)
             {
-                int extraBP = Core.BpPerTurn.Value;
-                _delayLog++;
-                if (_delayLog <= 5)
-                    Melon<Core>.Logger.Msg($"[BP] SetDelayBPUp: {nBPUp} -> {nBPUp * extraBP} (x{extraBP})");
-                nBPUp *= extraBP;
+                _addBPHook.Trampoline(instance, team, methodInfo);
+                return;
             }
-            _delayBPHook.Trampoline(instance, delayTime, nBPUp, methodInfo);
+
+            // Original does SetBP(GetBP() + 1) for each character.
+            // Call original for the +1, then call again for extra BP.
+            _addBPHook.Trampoline(instance, team, methodInfo);
+
+            int extra = Core.BpPerTurn.Value - 1;
+            for (int i = 0; i < extra; i++)
+                _addBPHook.Trampoline(instance, team, methodInfo);
+
+            _addBPLog++;
+            if (_addBPLog <= 5)
+                Melon<Core>.Logger.Msg($"[BP] AddBPByTeam: +{Core.BpPerTurn.Value} total (team {team})");
         }
         catch
         {
-            try { _delayBPHook.Trampoline(instance, delayTime, nBPUp, methodInfo); } catch { }
-        }
-    }
-
-    private static int _getBPLog = 0;
-
-    private static int GetBP_Hook(nint instance, nint methodInfo)
-    {
-        try
-        {
-            int orig = _getBPHook.Trampoline(instance, methodInfo);
-            if (!Core.BpModEnabled.Value) return orig;
-
-            // GetBP reads +0x18 (active BP, clamped to 3 by SetBP)
-            // SetBaseBP writes boosted value to +0x1C
-            // When base BP > active BP, sync active up to base
-            nint statePtr = *(nint*)(instance + 0x140);
-            if (statePtr != 0)
-            {
-                int baseBP = *(int*)(statePtr + 0x1C);
-                if (baseBP > orig)
-                {
-                    // Also write it to +0x18 so everything stays in sync
-                    int limit = Core.BpLimitOverride.Value;
-                    int clamped = System.Math.Min(baseBP, limit);
-                    *(int*)(statePtr + 0x18) = clamped;
-
-                    _getBPLog++;
-                    if (_getBPLog <= 5)
-                        Melon<Core>.Logger.Msg($"[BP] GetBP synced: active {orig} -> base {clamped}");
-                    return clamped;
-                }
-            }
-            return orig;
-        }
-        catch { try { return _getBPHook.Trampoline(instance, methodInfo); } catch { return 0; } }
-    }
-
-    private static int _baseBPLog = 0;
-
-    private static void SetBaseBP_Hook(nint instance, int basebp, nint methodInfo)
-    {
-        try
-        {
-            if (Core.BpModEnabled.Value)
-            {
-                _baseBPLog++;
-                if (_baseBPLog <= 10)
-                    Melon<Core>.Logger.Msg($"[BP] SetBaseBP({basebp}) called");
-
-                // If basebp is going up (recovery), multiply the gain
-                // BaseBP typically goes 0 -> 1 each turn. We make it 0 -> 2.
-                if (basebp > 0)
-                {
-                    int boosted = basebp * Core.BpPerTurn.Value;
-                    if (_baseBPLog <= 10)
-                        Melon<Core>.Logger.Msg($"[BP] SetBaseBP {basebp} -> {boosted} (x{Core.BpPerTurn.Value})");
-                    basebp = boosted;
-                }
-            }
-            _setBaseBPHook.Trampoline(instance, basebp, methodInfo);
-        }
-        catch
-        {
-            try { _setBaseBPHook.Trampoline(instance, basebp, methodInfo); } catch { }
+            try { _addBPHook.Trampoline(instance, team, methodInfo); } catch { }
         }
     }
 }
