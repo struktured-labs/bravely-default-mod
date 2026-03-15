@@ -163,5 +163,9 @@ public class Core : MelonMod
     public override void OnUpdate()
     {
         InitializeIfNeeded();
+        // Check if custom music needs to loop (OnUpdate may not fire without support module,
+        // but it's here as a fallback)
+        if (CustomBattleMusicEnabled.Value)
+            Patches.NativeMusicPatch.CheckLoop();
     }
 }

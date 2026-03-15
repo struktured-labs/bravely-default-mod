@@ -123,6 +123,34 @@ public class Condition
         CompareOp.NotEqual => System.Math.Abs(lhs - rhs) >= 0.01f,
         _ => false,
     };
+
+    /// <summary>
+    /// Compact string for command plate preview, e.g. "HP&lt;30%" or "1 Foe" or "" (Always).
+    /// </summary>
+    public string ToShortString()
+    {
+        string opStr = Op switch
+        {
+            CompareOp.Less => "<",
+            CompareOp.LessOrEqual => "<=",
+            CompareOp.Equal => "=",
+            CompareOp.GreaterOrEqual => ">=",
+            CompareOp.Greater => ">",
+            CompareOp.NotEqual => "!=",
+            _ => "?"
+        };
+
+        return Type switch
+        {
+            ConditionType.Always => "",
+            ConditionType.HpPercent => $"HP{opStr}{Value:0}%",
+            ConditionType.MpPercent => $"MP{opStr}{Value:0}%",
+            ConditionType.EnemyCount => $"{Value:0} Foe{(Value != 1 ? "s" : "")}",
+            ConditionType.AllyCount => $"{Value:0} Ally",
+            ConditionType.BpValue => $"BP{opStr}{Value:0}",
+            _ => "?"
+        };
+    }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -154,6 +182,32 @@ public class BattleAction
     public static BattleAction AttackStrongest() => new(ActionType.Attack, TargetSelector.StrongestEnemy);
     public static BattleAction AbilityOnSelf(int abilityId) => new(ActionType.Ability, TargetSelector.Self, abilityId);
     public static BattleAction GuardSelf() => new(ActionType.Guard, TargetSelector.Self);
+
+    /// <summary>
+    /// Compact action label for command plate preview, e.g. "Atk Weak", "Cure", "Guard".
+    /// </summary>
+    public string ToShortString()
+    {
+        string targetStr = Target switch
+        {
+            TargetSelector.WeakestEnemy => " Weak",
+            TargetSelector.StrongestEnemy => " Strong",
+            TargetSelector.Self => " Self",
+            TargetSelector.WeakestAlly => " Ally",
+            TargetSelector.RandomEnemy => " Rnd",
+            _ => ""
+        };
+
+        return Type switch
+        {
+            ActionType.Attack => $"Atk{targetStr}",
+            ActionType.Ability => AbilityId > 0 ? $"Abl#{AbilityId}{targetStr}" : $"Ability{targetStr}",
+            ActionType.Item => ItemId > 0 ? $"Itm#{ItemId}{targetStr}" : $"Item{targetStr}",
+            ActionType.Guard => "Guard",
+            ActionType.Default => "Default",
+            _ => "?"
+        };
+    }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -184,6 +238,26 @@ public class Rule
             if (!cond.Evaluate(self, battle))
                 return false;
         return true;
+    }
+
+    /// <summary>
+    /// Compact rule summary for command plate preview.
+    /// Format: "condition1,condition2->action" or "->action" for Always.
+    /// Examples: "HP&lt;30%->Abl#1 Self", "1 Foe->Atk Strong", "->Atk Weak"
+    /// </summary>
+    public string ToShortString()
+    {
+        var condParts = new List<string>();
+        foreach (var cond in Conditions)
+        {
+            var s = cond.ToShortString();
+            if (!string.IsNullOrEmpty(s))
+                condParts.Add(s);
+        }
+
+        string condStr = condParts.Count > 0 ? string.Join(",", condParts) : "";
+        string actionStr = Action?.ToShortString() ?? "?";
+        return $"{condStr}\u2192{actionStr}";
     }
 }
 
@@ -287,6 +361,20 @@ public class RuleEngine
     public RuleEngine()
     {
         DefaultProfile = CreateDefaultProfile();
+    }
+
+    /// <summary>
+    /// Get the effective profile for a character index (per-character override or default).
+    /// Returns null only if no profiles are configured at all.
+    /// </summary>
+    public RuleProfile GetProfileForCharacter(int charIndex)
+    {
+        if (charIndex >= 0 && charIndex < CharacterProfiles.Length)
+        {
+            var assigned = CharacterProfiles[charIndex];
+            if (assigned != null) return assigned;
+        }
+        return DefaultProfile;
     }
 
     /// <summary>

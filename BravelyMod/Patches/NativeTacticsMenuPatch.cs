@@ -39,8 +39,15 @@ public static unsafe class NativeTacticsMenuPatch
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void d_SetDialogText(nint instance, nint text, byte selVisible, nint methodInfo);
 
+    // void AutoWindowAddCommandPlate(BtlGUIAutoWindow* this, int characterIndex, Il2CppString* commandName, Il2CppString* iconName, byte IsAbility, MethodInfo*)
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void d_AutoWindowAddCommandPlate(nint instance, int characterIndex, nint commandName, nint iconName, byte isAbility, nint methodInfo);
+
     private static NativeHook<d_UpdateAutoSubMenu> _updateHook;
     private static d_UpdateAutoSubMenu _pinnedUpdate;
+
+    private static NativeHook<d_AutoWindowAddCommandPlate> _addCommandPlateHook;
+    private static d_AutoWindowAddCommandPlate _pinnedAddCommandPlate;
 
     private static nint _setDialogTextPtr;
     private static nint _setDialogTextMethodInfo;
@@ -48,9 +55,17 @@ public static unsafe class NativeTacticsMenuPatch
     private static int _logCount = 0;
     private const int MaxLogLines = 30;
 
+    /// <summary>
+    /// Tracks which rule index to show next per character during command plate population.
+    /// Reset when character index decreases (new autobattle preview cycle).
+    /// </summary>
+    private static readonly int[] _ruleIndexPerCharacter = new int[4];
+    private static int _lastCharacterIndex = -1;
+
     public static void Apply()
     {
         HookUpdateAutoSubMenu();
+        HookAutoWindowAddCommandPlate();
         ResolveSetDialogText();
     }
 
@@ -280,5 +295,111 @@ public static unsafe class NativeTacticsMenuPatch
                 _logCount++;
             }
         }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // AutoWindowAddCommandPlate hook — rule preview in command plates
+    // ──────────────────────────────────────────────────────────────
+
+    private static void HookAutoWindowAddCommandPlate()
+    {
+        try
+        {
+            var field = typeof(Il2Cpp.BtlGUIAutoWindow).GetField(
+                "NativeMethodInfoPtr_AutoWindowAddCommandPlate_Public_Void_Int32_String_String_Boolean_0",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            if (field == null)
+            {
+                Melon<Core>.Logger.Warning("[TacticsMenu] AutoWindowAddCommandPlate field not found");
+                return;
+            }
+
+            var mi = (nint)field.GetValue(null);
+            if (mi == 0)
+            {
+                Melon<Core>.Logger.Warning("[TacticsMenu] AutoWindowAddCommandPlate method info ptr is null");
+                return;
+            }
+
+            var native = *(nint*)mi;
+            Melon<Core>.Logger.Msg($"[TacticsMenu] AutoWindowAddCommandPlate native @ 0x{native:X}");
+
+            _pinnedAddCommandPlate = AutoWindowAddCommandPlate_Hook;
+            var hookPtr = Marshal.GetFunctionPointerForDelegate(_pinnedAddCommandPlate);
+            _addCommandPlateHook = new NativeHook<d_AutoWindowAddCommandPlate>(native, hookPtr);
+            _addCommandPlateHook.Attach();
+            Melon<Core>.Logger.Msg("[TacticsMenu] AutoWindowAddCommandPlate hook attached!");
+        }
+        catch (Exception ex)
+        {
+            Melon<Core>.Logger.Warning($"[TacticsMenu] AutoWindowAddCommandPlate hook failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Hook for AutoWindowAddCommandPlate. Replaces the commandName string with a
+    /// compact rule summary from the character's autobattle profile.
+    ///
+    /// The game calls this once per command slot per character during autobattle preview.
+    /// We track which rule to show per character using _ruleIndexPerCharacter, advancing
+    /// each time a plate is added for the same character.
+    /// </summary>
+    private static void AutoWindowAddCommandPlate_Hook(nint instance, int characterIndex, nint commandName, nint iconName, byte isAbility, nint methodInfo)
+    {
+        try
+        {
+            var engine = NativeAutoBattlePatch.RuleEngine;
+            var profile = engine.GetProfileForCharacter(characterIndex);
+
+            if (profile != null && profile.Rules.Count > 0)
+            {
+                // Detect new preview cycle: when characterIndex goes back to 0 or lower than last seen
+                if (characterIndex <= _lastCharacterIndex && characterIndex == 0)
+                {
+                    for (int i = 0; i < _ruleIndexPerCharacter.Length; i++)
+                        _ruleIndexPerCharacter[i] = 0;
+                }
+
+                // Track per-character rule index for sequential plate calls
+                if (characterIndex != _lastCharacterIndex)
+                {
+                    // New character — don't reset, the counter persists within a cycle
+                }
+                _lastCharacterIndex = characterIndex;
+
+                int safeIdx = characterIndex >= 0 && characterIndex < _ruleIndexPerCharacter.Length
+                    ? characterIndex : 0;
+
+                int ruleIdx = _ruleIndexPerCharacter[safeIdx];
+                if (ruleIdx < profile.Rules.Count)
+                {
+                    var rule = profile.Rules[ruleIdx];
+                    string summary = rule.ToShortString();
+
+                    // Advance the rule index for next plate call on this character
+                    _ruleIndexPerCharacter[safeIdx] = ruleIdx + 1;
+
+                    // Create IL2CPP string and replace commandName
+                    commandName = Il2CppInterop.Runtime.IL2CPP.ManagedStringToIl2Cpp(summary);
+
+                    if (_logCount < MaxLogLines)
+                    {
+                        Melon<Core>.Logger.Msg($"[TacticsMenu] Plate char={characterIndex} rule={ruleIdx}: {summary}");
+                        _logCount++;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            if (_logCount < MaxLogLines)
+            {
+                Melon<Core>.Logger.Warning($"[TacticsMenu] AddCommandPlate hook exception: {ex.Message}");
+                _logCount++;
+            }
+        }
+
+        // Call original with (possibly modified) commandName
+        _addCommandPlateHook.Trampoline(instance, characterIndex, commandName, iconName, isAbility, methodInfo);
     }
 }

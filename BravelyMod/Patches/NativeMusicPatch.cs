@@ -239,11 +239,35 @@ overrides:
         }
     }
 
+    private static string _currentHcaPath;
+    private static Il2CppCriWare.CriAtomExPlayback _currentPlayback;
+
+    /// <summary>Check if custom music stopped and restart it (poor man's loop)</summary>
+    public static void CheckLoop()
+    {
+        try
+        {
+            if (_customPlaying && _customPlayer != null && _currentHcaPath != null)
+            {
+                var status = _customPlayer.GetStatus();
+                // CriAtomExPlayer.Status: Stop=0, Prep=1, Playing=2, PlayEnd=3, Error=4
+                if ((int)status >= 3) // PlayEnd or Error
+                {
+                    _customPlayer.SetFile(null, _currentHcaPath);
+                    _customPlayer.SetVolume(1.0f);
+                    _currentPlayback = _customPlayer.Start();
+                }
+            }
+        }
+        catch { }
+    }
+
     private static nint PlayCustomHCA(string hcaPath)
     {
         try
         {
             StopCustomPlayer();
+            _currentHcaPath = hcaPath;
             _customPlayer = new CriPlayer(256, 1);
             if (_customPlayer == null || !_customPlayer.isAvailable) return 0;
 

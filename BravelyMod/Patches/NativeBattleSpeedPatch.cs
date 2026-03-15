@@ -92,6 +92,9 @@ public static unsafe class NativeBattleSpeedPatch
                 speed = newSpeed;
             }
             _setTimeSpeedHook.Trampoline(instance, speed, methodInfo);
+
+            // Piggyback: check if custom music needs looping
+            NativeMusicPatch.CheckLoop();
         }
         catch
         {
