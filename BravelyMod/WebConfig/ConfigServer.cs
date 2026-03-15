@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -638,16 +639,16 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
             hcaHtml.Append($"<p class=\"dimmed\" id=\"fileList\">Error scanning folder: {WebUtility.HtmlEncode(ex.Message)}</p>");
         }
 
-        // Upload HCA widget
+        // Upload music widget (accepts HCA, MP3, WAV, OGG, FLAC — non-HCA converted server-side)
         hcaHtml.Append(@"
             <div class=""upload-section"">
-                <div class=""section-label"">Upload HCA File</div>
-                <p class=""cs-note"">Convert MP3/WAV to HCA first using <code>scripts/convert_music.sh</code>, then upload the .hca file here.</p>
+                <div class=""section-label"">Upload Music File</div>
+                <p class=""cs-note"">Upload <strong>.hca</strong> files directly, or <strong>.mp3 / .wav / .ogg / .flac</strong> files for automatic server-side conversion.</p>
                 <div class=""upload-area"" id=""uploadArea"">
-                    <input type=""file"" id=""hcaFileInput"" accept="".hca"" style=""display:none"" onchange=""uploadFile(this)""/>
+                    <input type=""file"" id=""hcaFileInput"" accept="".hca,.mp3,.wav,.ogg,.flac"" style=""display:none"" onchange=""uploadFile(this)""/>
                     <div class=""upload-prompt"" onclick=""document.getElementById('hcaFileInput').click()"">
                         <span class=""upload-icon"">&#8682;</span>
-                        <span>Click to select .hca file or drag &amp; drop</span>
+                        <span>Click to select audio file or drag &amp; drop<br/><small>.hca .mp3 .wav .ogg .flac</small></span>
                     </div>
                     <div class=""upload-status"" id=""uploadStatus"" style=""display:none""></div>
                 </div>
@@ -758,11 +759,14 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
             function uploadFile(input) {{
                 var file = input.files[0];
                 if (!file) return;
-                if (!file.name.endsWith('.hca')) {{
-                    showUploadStatus('Only .hca files are accepted. Use convert_music.sh to convert first.', 'error');
+                var validExts = ['.hca', '.mp3', '.wav', '.ogg', '.flac'];
+                var ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+                if (validExts.indexOf(ext) < 0) {{
+                    showUploadStatus('Unsupported format. Accepted: ' + validExts.join(', '), 'error');
                     return;
                 }}
-                showUploadStatus('Uploading ' + file.name + '...', 'info');
+                var isHca = ext === '.hca';
+                showUploadStatus(isHca ? 'Uploading ' + file.name + '...' : 'Uploading ' + file.name + ' (will convert to HCA server-side)...', 'info');
 
                 var fd = new FormData();
                 fd.append('file', file);
@@ -772,6 +776,9 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                     .then(function(data) {{
                         if (data.error) {{
                             showUploadStatus('Error: ' + data.error, 'error');
+                        }} else if (data.converting) {{
+                            showUploadStatus('File saved. Converting to HCA... (this may take a moment)', 'info');
+                            pollConversion(data.name);
                         }} else {{
                             showUploadStatus('Uploaded: ' + data.path + ' (' + formatSize(data.size) + ')', 'success');
                             refreshFileList();
@@ -781,6 +788,36 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                         showUploadStatus('Upload failed: ' + err, 'error');
                     }});
                 input.value = ''; // reset so same file can be re-uploaded
+            }}
+
+            function pollConversion(name) {{
+                var attempts = 0;
+                var maxAttempts = 60; // 60 seconds max
+                var timer = setInterval(function() {{
+                    attempts++;
+                    fetch('/music/convert-status?name=' + encodeURIComponent(name))
+                        .then(function(r) {{ return r.json(); }})
+                        .then(function(data) {{
+                            if (data.done) {{
+                                clearInterval(timer);
+                                if (data.error) {{
+                                    showUploadStatus('Conversion failed: ' + data.error + (data.manual_cmd ? '<br/><code>' + data.manual_cmd + '</code>' : ''), 'error');
+                                }} else {{
+                                    showUploadStatus('Converted: ' + data.path + ' (' + formatSize(data.size) + ')', 'success');
+                                    refreshFileList();
+                                }}
+                            }} else if (attempts >= maxAttempts) {{
+                                clearInterval(timer);
+                                showUploadStatus('Conversion timed out. Run manually: <code>' + (data.manual_cmd || 'scripts/convert_music.sh') + '</code>', 'error');
+                            }}
+                        }})
+                        .catch(function() {{
+                            if (attempts >= maxAttempts) {{
+                                clearInterval(timer);
+                                showUploadStatus('Could not check conversion status.', 'error');
+                            }}
+                        }});
+                }}, 1000);
             }}
 
             function showUploadStatus(msg, type) {{

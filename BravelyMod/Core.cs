@@ -105,8 +105,9 @@ public class Core : MelonMod
         Patches.NativeBuffPatch.Apply();
         if (WalkSpeedModEnabled.Value)
             Patches.NativeSpeedWalkPatch.Apply();
-        Patches.NativeAutoBattlePatch.Apply();
-        Patches.NativeTacticsMenuPatch.Apply();
+        // Autobattle disabled — sends wrong commands, causes -99 BP and UI corruption
+        // Patches.NativeAutoBattlePatch.Apply();
+        // Patches.NativeTacticsMenuPatch.Apply();
         Patches.NativeJobSwapPatch.Apply();
         // Button swap disabled — use Steam Input controller config instead
         // Patches.NativeButtonSwapPatch.Apply();
@@ -118,6 +119,8 @@ public class Core : MelonMod
             Patches.NativeColonyPatch.Apply();
         // Disabled: encounter hook may cause UI issues
         // Patches.NativeEncounterPatch.Apply();
+        if (DamageCapEnabled.Value)
+            Patches.NativeDamageCapPatch.Apply();
         if (CustomBattleMusicEnabled.Value)
             Patches.NativeMusicPatch.Apply();
 
