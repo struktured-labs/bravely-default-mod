@@ -140,6 +140,19 @@ public static class ConfigServer
                     responseBody = HandleAutoBattleReload();
                     break;
 
+                case "/autobattle/editor" when method == "GET":
+                    responseBody = HandleAutobattleEditor();
+                    break;
+
+                case "/autobattle/editor" when method == "POST":
+                    responseBody = HandleAutobattleEditorPost(request);
+                    break;
+
+                case "/autobattle/editor/api" when method == "GET":
+                    responseBody = HandleAutobattleEditorApi();
+                    contentType = "application/json; charset=utf-8";
+                    break;
+
                 case "/music" when method == "GET":
                     responseBody = HandleMusicGet();
                     break;
@@ -595,6 +608,931 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
             Melon<Core>.Logger.Warning($"[WebConfig] Reload error: {ex.Message}");
         }
         return HandleAutoBattleGet(MsgBox("Reloaded config from disk.", "success"));
+    }
+
+    // ── AutoBattle Visual Editor ─────────────────────────────────
+
+    /// <summary>
+    /// Return the current config as JSON for the editor's initial state.
+    /// </summary>
+    private static string HandleAutobattleEditorApi()
+    {
+        try
+        {
+            AutoBattleConfigDto dto;
+            if (File.Exists(AutoBattleConfigPath))
+            {
+                string yaml = File.ReadAllText(AutoBattleConfigPath);
+                var deserializer = new YamlDotNet.Serialization.DeserializerBuilder()
+                    .WithNamingConvention(YamlDotNet.Serialization.NamingConventions.CamelCaseNamingConvention.Instance)
+                    .IgnoreUnmatchedProperties()
+                    .Build();
+                dto = deserializer.Deserialize<AutoBattleConfigDto>(yaml) ?? ProfileConfig.GetDefaultConfig();
+            }
+            else
+            {
+                dto = ProfileConfig.GetDefaultConfig();
+            }
+
+            var sb = new StringBuilder();
+            sb.Append("{");
+            sb.Append($"\"activeProfile\":\"{EscapeJson(dto.ActiveProfile ?? "")}\"");
+            sb.Append(",\"profiles\":{");
+            bool firstProfile = true;
+            foreach (var kv in dto.Profiles)
+            {
+                if (!firstProfile) sb.Append(",");
+                firstProfile = false;
+                sb.Append($"\"{EscapeJson(kv.Key)}\":[");
+                bool firstRule = true;
+                if (kv.Value != null)
+                {
+                    foreach (var rule in kv.Value)
+                    {
+                        if (!firstRule) sb.Append(",");
+                        firstRule = false;
+                        sb.Append($"\"{EscapeJson(rule)}\"");
+                    }
+                }
+                sb.Append("]");
+            }
+            sb.Append("}");
+            sb.Append(",\"assignments\":[");
+            if (dto.Assignments != null)
+            {
+                for (int i = 0; i < dto.Assignments.Count; i++)
+                {
+                    if (i > 0) sb.Append(",");
+                    sb.Append($"\"{EscapeJson(dto.Assignments[i])}\"");
+                }
+            }
+            sb.Append("]");
+            sb.Append("}");
+            return sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            return $"{{\"error\":\"{EscapeJson(ex.Message)}\"}}";
+        }
+    }
+
+    /// <summary>
+    /// Handle POST from the visual editor.
+    /// </summary>
+    private static string HandleAutobattleEditorPost(HttpListenerRequest request)
+    {
+        try
+        {
+            string body;
+            using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+            {
+                body = reader.ReadToEnd();
+            }
+
+            string yamlContent = body.StartsWith("yaml=") ? ExtractFormValue(body, "yaml") : body;
+
+            if (string.IsNullOrWhiteSpace(yamlContent))
+            {
+                return HandleAutobattleEditor(MsgBox("Error: No content received.", "error"));
+            }
+
+            var (errors, summaries) = ProfileConfig.ValidateConfigDetailed(yamlContent);
+            if (errors.Count > 0)
+            {
+                var sb = new StringBuilder();
+                sb.Append(MsgBoxOpen("error"));
+                sb.Append("<strong>Validation failed — not saved.</strong><ul>");
+                foreach (var err in errors)
+                    sb.Append($"<li>{WebUtility.HtmlEncode(err)}</li>");
+                sb.Append("</ul>");
+                sb.Append(MsgBoxClose());
+                return HandleAutobattleEditor(sb.ToString());
+            }
+
+            File.WriteAllText(AutoBattleConfigPath, yamlContent);
+            ProfileConfig.LoadInto(AutoBattleConfigPath, NativeAutoBattlePatch.RuleEngine);
+
+            var successSb = new StringBuilder();
+            successSb.Append(MsgBoxOpen("success"));
+            successSb.Append("<strong>Saved and reloaded!</strong> New rules active on next autobattle cycle.");
+            if (summaries.Count > 0)
+            {
+                successSb.Append("<ul>");
+                foreach (var s in summaries)
+                    successSb.Append($"<li>{WebUtility.HtmlEncode(s)}</li>");
+                successSb.Append("</ul>");
+            }
+            successSb.Append(MsgBoxClose());
+            return HandleAutobattleEditor(successSb.ToString());
+        }
+        catch (Exception ex)
+        {
+            return HandleAutobattleEditor(MsgBox($"Error: {ex.Message}", "error"));
+        }
+    }
+
+    /// <summary>
+    /// Render the visual autobattle rule editor page.
+    /// </summary>
+    private static string HandleAutobattleEditor(string messageHtml = null)
+    {
+        string msgBlock = messageHtml ?? "";
+        string editorScript = GetAutobattleEditorScript();
+
+        return WrapHtml("AutoBattle Editor", "autobattle-editor",
+            msgBlock + GetAutobattleEditorHtml() + editorScript);
+    }
+
+    /// <summary>
+    /// Static HTML body for the autobattle editor (no interpolation needed).
+    /// </summary>
+    private static string GetAutobattleEditorHtml()
+    {
+        return @"
+            <h2>AutoBattle Rule Editor</h2>
+            <p class=""subtitle"">Visual rule editor — build conditional autobattle profiles per character.
+            <br/><a href=""/autobattle"">Switch to Advanced YAML Editor</a></p>
+
+            <div id=""editorApp"">
+                <div class=""ab-toolbar"">
+                    <div class=""ab-toolbar-left"">
+                        <label class=""ab-label"">Party Profile:</label>
+                        <select id=""partyProfileSelect"" class=""ab-select"" onchange=""loadPartyProfile()"">
+                            <option value=""__current__"">Current Config</option>
+                        </select>
+                        <button type=""button"" class=""btn-sm btn-set"" onclick=""savePartyProfile()"">Save as Party Profile</button>
+                        <button type=""button"" class=""btn-sm btn-set"" onclick=""newPartyProfile()"">New Party Profile</button>
+                    </div>
+                    <div class=""ab-toolbar-right"">
+                        <button type=""button"" class=""btn-primary"" onclick=""saveAll()"">Save &amp; Reload</button>
+                        <button type=""button"" class=""btn-secondary"" onclick=""reloadFromDisk()"">Reload from Disk</button>
+                    </div>
+                </div>
+
+                <div id=""charCards"" class=""ab-char-grid""></div>
+
+                <div class=""ab-profiles-section"">
+                    <div class=""section-label"">Rule Profiles</div>
+                    <div class=""ab-profile-toolbar"">
+                        <button type=""button"" class=""btn-sm btn-set"" onclick=""addProfile()"">+ New Profile</button>
+                    </div>
+                    <div id=""profileCards"" class=""ab-profile-grid""></div>
+                </div>
+
+                <details class=""ab-yaml-preview"">
+                    <summary>YAML Preview</summary>
+                    <pre id=""yamlPreview"" class=""cs-example"" style=""max-height:400px;overflow:auto;""></pre>
+                </details>
+            </div>
+        " + GetAutobattleEditorCss();
+    }
+
+    /// <summary>
+    /// CSS styles for the autobattle editor (non-interpolated verbatim string).
+    /// </summary>
+    private static string GetAutobattleEditorCss()
+    {
+        return @"
+            <style>
+                .ab-toolbar {
+                    display: flex; justify-content: space-between; align-items: center;
+                    flex-wrap: wrap; gap: 0.8em; margin-bottom: 1.2em; padding: 0.8em 1em;
+                    background: #16162a; border: 1px solid #2a2a44; border-radius: 8px;
+                }
+                .ab-toolbar-left, .ab-toolbar-right { display: flex; align-items: center; gap: 0.6em; flex-wrap: wrap; }
+                .ab-label { color: #7777a0; font-size: 0.9em; font-weight: 600; }
+                .ab-select {
+                    background: #12122a; color: #d0d0d8; border: 1px solid #333355;
+                    padding: 6px 10px; border-radius: 4px; font-size: 0.9em; min-width: 160px;
+                }
+                .ab-select:focus { outline: none; border-color: #e4a040; }
+                .ab-char-grid {
+                    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                    gap: 1em; margin-bottom: 1.5em;
+                }
+                .ab-char-card {
+                    background: #16162a; border: 1px solid #2a2a44; border-radius: 8px; padding: 1em;
+                }
+                .ab-char-header {
+                    display: flex; justify-content: space-between; align-items: center;
+                    margin-bottom: 0.8em; padding-bottom: 0.5em; border-bottom: 1px solid #2a2a44;
+                }
+                .ab-char-name { font-size: 1.1em; font-weight: 700; color: #e4a040; }
+                .ab-char-profile-select {
+                    background: #12122a; color: #d0d0d8; border: 1px solid #333355;
+                    padding: 4px 8px; border-radius: 4px; font-size: 0.85em;
+                }
+                .ab-char-profile-select:focus { outline: none; border-color: #e4a040; }
+                .ab-rule-list { list-style: none; padding: 0; margin: 0; }
+                .ab-rule-item {
+                    display: flex; align-items: flex-start; gap: 0.4em; padding: 0.5em 0;
+                    border-bottom: 1px solid #1a1a30; font-size: 0.85em;
+                }
+                .ab-rule-item:last-child { border-bottom: none; }
+                .ab-rule-num { color: #666688; font-weight: 600; min-width: 1.5em; text-align: right; flex-shrink: 0; padding-top: 0.25em; }
+                .ab-rule-dsl { font-family: 'Consolas', 'Courier New', monospace; color: #a0c8e0; flex: 1; word-break: break-word; }
+                .ab-rule-actions { display: flex; gap: 0.2em; flex-shrink: 0; }
+                .ab-btn-icon {
+                    background: transparent; border: 1px solid #333355; color: #7777a0;
+                    width: 24px; height: 24px; border-radius: 3px; cursor: pointer;
+                    display: flex; align-items: center; justify-content: center;
+                    font-size: 0.8em; padding: 0; transition: color 0.15s, border-color 0.15s;
+                }
+                .ab-btn-icon:hover { color: #d0d0d8; border-color: #5dade2; }
+                .ab-btn-icon.ab-btn-delete:hover { color: #e74c3c; border-color: #e74c3c; }
+                .ab-add-rule {
+                    width: 100%; margin-top: 0.5em; padding: 6px; background: transparent;
+                    border: 1px dashed #333355; color: #5dade2; border-radius: 4px;
+                    cursor: pointer; font-size: 0.85em; transition: border-color 0.15s, color 0.15s;
+                }
+                .ab-add-rule:hover { border-color: #5dade2; color: #70c0e8; }
+                .ab-profiles-section { margin-top: 1.5em; padding-top: 1em; border-top: 1px solid #2a2a44; }
+                .ab-profile-toolbar { margin-bottom: 0.8em; }
+                .ab-profile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 1em; }
+                .ab-profile-card { background: #12122a; border: 1px solid #2a2a44; border-radius: 6px; padding: 0.8em 1em; }
+                .ab-profile-card.ab-profile-active { border-color: #e4a040; }
+                .ab-profile-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5em; }
+                .ab-profile-name { font-weight: 700; color: #e4a040; font-size: 0.95em; }
+                .ab-profile-badge { font-size: 0.7em; padding: 2px 6px; border-radius: 3px; background: #0a2a1a; color: #2ecc71; font-weight: 600; }
+                .ab-modal-overlay {
+                    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+                    background: rgba(0,0,0,0.7); z-index: 200;
+                    display: flex; align-items: center; justify-content: center;
+                }
+                .ab-modal {
+                    background: #16162a; border: 1px solid #e4a040; border-radius: 10px;
+                    padding: 1.5em; min-width: 500px; max-width: 90vw; max-height: 85vh;
+                    overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+                }
+                .ab-modal h3 { color: #e4a040; margin-top: 0; margin-bottom: 1em; }
+                .ab-modal-section { margin-bottom: 1.2em; }
+                .ab-modal-section-title { font-size: 0.8em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: #7777a0; margin-bottom: 0.5em; }
+                .ab-cond-row, .ab-action-row { display: flex; align-items: center; gap: 0.5em; margin-bottom: 0.4em; flex-wrap: wrap; }
+                .ab-cond-row select, .ab-action-row select, .ab-cond-row input, .ab-action-row input {
+                    background: #12122a; color: #d0d0d8; border: 1px solid #333355;
+                    padding: 5px 8px; border-radius: 4px; font-size: 0.9em;
+                }
+                .ab-cond-row select:focus, .ab-action-row select:focus, .ab-cond-row input:focus, .ab-action-row input:focus { outline: none; border-color: #e4a040; }
+                .ab-cond-row input[type=""number""] { width: 70px; }
+                .ab-modal-btn-row { display: flex; justify-content: flex-end; gap: 0.6em; margin-top: 1.5em; padding-top: 1em; border-top: 1px solid #2a2a44; }
+                .ab-dsl-preview {
+                    font-family: 'Consolas', 'Courier New', monospace; background: #0f0f1a;
+                    padding: 0.6em 1em; border-radius: 4px; color: #a0c8e0; font-size: 0.9em;
+                    margin-top: 0.8em; border: 1px solid #2a2a44;
+                }
+                .ab-yaml-preview { margin-top: 1.5em; padding: 0.5em 0; }
+                .ab-yaml-preview summary { cursor: pointer; color: #7777a0; font-size: 0.9em; font-weight: 600; }
+                .ab-yaml-preview summary:hover { color: #d0d0d8; }
+                .ab-warning { display: inline-block; color: #e4a040; font-size: 0.8em; cursor: help; }
+            </style>
+        ";
+    }
+
+    /// <summary>
+    /// JavaScript for the autobattle visual editor (non-interpolated verbatim string
+    /// to avoid conflicts with C# string interpolation).
+    /// </summary>
+    private static string GetAutobattleEditorScript()
+    {
+        return @"
+            <script>
+            // ── State ──
+            var CHAR_NAMES = ['Tiz', 'Agnes', 'Ringabel', 'Edea'];
+            var CONDITION_TYPES = ['Always','HP','MP','BP','Foes','Allies','Turn'];
+            var OPERATORS = ['<','<=','=','>=','>','!='];
+            var ACTION_TYPES = ['Atk Weak','Atk Strong','Atk Random','Cure Self','Cure Ally','Guard','Default'];
+            var PERCENT_CONDITIONS = { 'HP':true, 'MP':true };
+
+            var state = {
+                activeProfile: 'Attack 4x',
+                profiles: {},
+                assignments: ['Attack 4x','Attack 4x','Attack 4x','Attack 4x'],
+                partyProfiles: {}
+            };
+
+            // ── Load from server ──
+            function loadState() {
+                var xhr = new XMLHttpRequest();
+                xhr.open('GET', '/autobattle/editor/api', true);
+                xhr.onload = function() {
+                    if (xhr.status === 200) {
+                        try {
+                            var data = JSON.parse(xhr.responseText);
+                            if (data.error) { console.error(data.error); return; }
+                            state.activeProfile = data.activeProfile || '';
+                            state.profiles = data.profiles || {};
+                            state.assignments = data.assignments || [];
+                            while (state.assignments.length < 4) state.assignments.push(state.activeProfile || 'Default');
+                            state.partyProfiles = data.partyProfiles || {};
+                        } catch(e) { console.error('Parse error:', e); }
+                    }
+                    renderAll();
+                };
+                xhr.send();
+            }
+
+            // ── Rendering ──
+            function renderAll() {
+                renderCharCards();
+                renderProfileCards();
+                renderYamlPreview();
+            }
+
+            function escHtml(s) {
+                if (!s) return '';
+                var d = document.createElement('div');
+                d.appendChild(document.createTextNode(s));
+                return d.innerHTML;
+            }
+
+            function escAttr(s) {
+                return escHtml(s).replace(/'/g, '&#39;').replace(/""/g, '&quot;');
+            }
+
+            function renderCharCards() {
+                var container = document.getElementById('charCards');
+                container.innerHTML = '';
+                var profileNames = Object.keys(state.profiles);
+
+                for (var i = 0; i < 4; i++) {
+                    var assigned = state.assignments[i] || state.activeProfile || '';
+                    var rules = state.profiles[assigned] || [];
+
+                    var optionsHtml = '';
+                    for (var pi = 0; pi < profileNames.length; pi++) {
+                        var n = profileNames[pi];
+                        optionsHtml += '<option value=""' + escAttr(n) + '""' + (n === assigned ? ' selected' : '') + '>' + escHtml(n) + '</option>';
+                    }
+
+                    var rulesHtml = '';
+                    for (var ri = 0; ri < rules.length; ri++) {
+                        rulesHtml += '<li class=""ab-rule-item"">' +
+                            '<span class=""ab-rule-num"">' + (ri+1) + '</span>' +
+                            '<span class=""ab-rule-dsl"">' + escHtml(rules[ri] || '(empty)') + '</span>' +
+                            '<span class=""ab-rule-actions"">' +
+                            '<button class=""ab-btn-icon"" onclick=""editRule(' + i + ',' + ri + ')"" title=""Edit"">&#9998;</button>' +
+                            '<button class=""ab-btn-icon"" onclick=""moveRule(' + i + ',' + ri + ',-1)"" title=""Move up"">&uarr;</button>' +
+                            '<button class=""ab-btn-icon"" onclick=""moveRule(' + i + ',' + ri + ',1)"" title=""Move down"">&darr;</button>' +
+                            '<button class=""ab-btn-icon ab-btn-delete"" onclick=""deleteRule(' + i + ',' + ri + ')"" title=""Delete"">&times;</button>' +
+                            '</span></li>';
+                    }
+
+                    if (!rulesHtml) {
+                        rulesHtml = '<li class=""ab-rule-item""><span class=""ab-rule-dsl"" style=""color:#666688"">(no rules — uses default behavior)</span></li>';
+                    }
+
+                    var card = document.createElement('div');
+                    card.className = 'ab-char-card';
+                    card.innerHTML =
+                        '<div class=""ab-char-header"">' +
+                        '<span class=""ab-char-name"">' + CHAR_NAMES[i] + '</span>' +
+                        '<select class=""ab-char-profile-select"" onchange=""assignProfile(' + i + ', this.value)"">' + optionsHtml + '</select>' +
+                        '</div>' +
+                        '<ul class=""ab-rule-list"">' + rulesHtml + '</ul>' +
+                        '<button class=""ab-add-rule"" onclick=""addRule(' + i + ')"">+ Add Rule</button>';
+                    container.appendChild(card);
+                }
+            }
+
+            function renderProfileCards() {
+                var container = document.getElementById('profileCards');
+                container.innerHTML = '';
+                var profileNames = Object.keys(state.profiles);
+
+                for (var pi = 0; pi < profileNames.length; pi++) {
+                    var name = profileNames[pi];
+                    var rules = state.profiles[name] || [];
+                    var isActive = (name === state.activeProfile);
+                    var assignedChars = [];
+                    for (var ai = 0; ai < state.assignments.length; ai++) {
+                        if (state.assignments[ai] === name) assignedChars.push(CHAR_NAMES[ai]);
+                    }
+
+                    var rulesHtml = '';
+                    for (var ri = 0; ri < rules.length; ri++) {
+                        rulesHtml += '<li class=""ab-rule-item"">' +
+                            '<span class=""ab-rule-num"">' + (ri+1) + '</span>' +
+                            '<span class=""ab-rule-dsl"">' + escHtml(rules[ri] || '(empty)') + '</span>' +
+                            '<span class=""ab-rule-actions"">' +
+                            '<button class=""ab-btn-icon"" onclick=""editProfileRule(\'' + escAttr(name) + '\', ' + ri + ')"" title=""Edit"">&#9998;</button>' +
+                            '<button class=""ab-btn-icon"" onclick=""moveProfileRule(\'' + escAttr(name) + '\', ' + ri + ', -1)"" title=""Move up"">&uarr;</button>' +
+                            '<button class=""ab-btn-icon"" onclick=""moveProfileRule(\'' + escAttr(name) + '\', ' + ri + ', 1)"" title=""Move down"">&darr;</button>' +
+                            '<button class=""ab-btn-icon ab-btn-delete"" onclick=""deleteProfileRule(\'' + escAttr(name) + '\', ' + ri + ')"" title=""Delete"">&times;</button>' +
+                            '</span></li>';
+                    }
+                    if (!rulesHtml) {
+                        rulesHtml = '<li class=""ab-rule-item""><span class=""ab-rule-dsl"" style=""color:#666688"">(empty profile — default behavior)</span></li>';
+                    }
+
+                    var badgeHtml = '';
+                    if (isActive) badgeHtml += '<span class=""ab-profile-badge"">Active</span> ';
+                    if (assignedChars.length > 0) badgeHtml += '<span class=""ab-profile-badge"">' + assignedChars.join(', ') + '</span>';
+
+                    var deleteBtn = profileNames.length > 1
+                        ? '<button class=""ab-btn-icon ab-btn-delete"" onclick=""deleteProfile(\'' + escAttr(name) + '\')"" title=""Delete"">&times;</button>'
+                        : '';
+
+                    var card = document.createElement('div');
+                    card.className = 'ab-profile-card' + (isActive ? ' ab-profile-active' : '');
+                    card.innerHTML =
+                        '<div class=""ab-profile-header"">' +
+                        '<span class=""ab-profile-name"">' + escHtml(name) + '</span>' +
+                        '<span>' + badgeHtml +
+                        '<button class=""ab-btn-icon"" onclick=""renameProfile(\'' + escAttr(name) + '\')"" title=""Rename"">&#9998;</button>' +
+                        '<button class=""ab-btn-icon"" onclick=""duplicateProfile(\'' + escAttr(name) + '\')"" title=""Duplicate"">&#10063;</button>' +
+                        deleteBtn +
+                        '</span></div>' +
+                        '<ul class=""ab-rule-list"">' + rulesHtml + '</ul>' +
+                        '<button class=""ab-add-rule"" onclick=""addProfileRule(\'' + escAttr(name) + '\')"">+ Add Rule</button>';
+                    container.appendChild(card);
+                }
+            }
+
+            function renderYamlPreview() {
+                var el = document.getElementById('yamlPreview');
+                if (el) el.textContent = buildYaml();
+            }
+
+            // ── YAML builder ──
+            function buildYaml() {
+                var lines = [];
+                lines.push('activeProfile: ' + state.activeProfile);
+                lines.push('');
+                lines.push('profiles:');
+                var names = Object.keys(state.profiles);
+                for (var i = 0; i < names.length; i++) {
+                    var name = names[i];
+                    var rules = state.profiles[name];
+                    if (!rules || rules.length === 0) {
+                        lines.push('  ' + name + ': []');
+                    } else {
+                        lines.push('  ' + name + ':');
+                        for (var ri = 0; ri < rules.length; ri++) {
+                            lines.push('    - ""' + rules[ri].replace(/\""/g, '\\""') + '""');
+                        }
+                    }
+                }
+                lines.push('');
+                lines.push('assignments:');
+                for (var ai = 0; ai < state.assignments.length; ai++) {
+                    lines.push('  - ' + state.assignments[ai]);
+                }
+                return lines.join('\n');
+            }
+
+            // ── Character-level operations ──
+            function assignProfile(charIdx, profileName) {
+                state.assignments[charIdx] = profileName;
+                renderAll();
+            }
+
+            function addRule(charIdx) {
+                openRuleModal(state.assignments[charIdx], -1);
+            }
+
+            function editRule(charIdx, ruleIdx) {
+                openRuleModal(state.assignments[charIdx], ruleIdx);
+            }
+
+            function moveRule(charIdx, ruleIdx, dir) {
+                moveProfileRule(state.assignments[charIdx], ruleIdx, dir);
+            }
+
+            function deleteRule(charIdx, ruleIdx) {
+                deleteProfileRule(state.assignments[charIdx], ruleIdx);
+            }
+
+            // ── Profile-level operations ──
+            function addProfile() {
+                var name = prompt('New profile name:');
+                if (!name || name.trim() === '') return;
+                name = name.trim();
+                if (state.profiles[name]) { alert('Profile already exists.'); return; }
+                state.profiles[name] = [];
+                renderAll();
+            }
+
+            function renameProfile(oldName) {
+                var newName = prompt('New name for profile:', oldName);
+                if (!newName || newName.trim() === '' || newName.trim() === oldName) return;
+                newName = newName.trim();
+                if (state.profiles[newName]) { alert('Profile name already exists.'); return; }
+                state.profiles[newName] = state.profiles[oldName];
+                delete state.profiles[oldName];
+                for (var i = 0; i < state.assignments.length; i++) {
+                    if (state.assignments[i] === oldName) state.assignments[i] = newName;
+                }
+                if (state.activeProfile === oldName) state.activeProfile = newName;
+                renderAll();
+            }
+
+            function duplicateProfile(name) {
+                var newName = prompt('Name for duplicate:', name + ' Copy');
+                if (!newName || newName.trim() === '') return;
+                newName = newName.trim();
+                if (state.profiles[newName]) { alert('Profile name already exists.'); return; }
+                state.profiles[newName] = (state.profiles[name] || []).slice();
+                renderAll();
+            }
+
+            function deleteProfile(name) {
+                if (!confirm('Delete profile ""' + name + '""?')) return;
+                var names = Object.keys(state.profiles);
+                if (names.length <= 1) { alert('Cannot delete the last profile.'); return; }
+                delete state.profiles[name];
+                var fallback = Object.keys(state.profiles)[0];
+                for (var i = 0; i < state.assignments.length; i++) {
+                    if (state.assignments[i] === name) state.assignments[i] = fallback;
+                }
+                if (state.activeProfile === name) state.activeProfile = fallback;
+                renderAll();
+            }
+
+            function addProfileRule(profileName) {
+                openRuleModal(profileName, -1);
+            }
+
+            function editProfileRule(profileName, ruleIdx) {
+                openRuleModal(profileName, ruleIdx);
+            }
+
+            function moveProfileRule(profileName, ruleIdx, dir) {
+                var rules = state.profiles[profileName];
+                if (!rules) return;
+                var newIdx = ruleIdx + dir;
+                if (newIdx < 0 || newIdx >= rules.length) return;
+                var tmp = rules[ruleIdx];
+                rules[ruleIdx] = rules[newIdx];
+                rules[newIdx] = tmp;
+                renderAll();
+            }
+
+            function deleteProfileRule(profileName, ruleIdx) {
+                var rules = state.profiles[profileName];
+                if (!rules) return;
+                rules.splice(ruleIdx, 1);
+                renderAll();
+            }
+
+            // ── Rule editor modal ──
+            var modalState = {
+                profileName: '',
+                ruleIdx: -1,
+                conditions: [],
+                actions: []
+            };
+
+            function parseDslToModal(dsl) {
+                var conditions = [];
+                var actions = [];
+
+                if (!dsl || dsl.trim() === '') {
+                    return { conditions: [{type:'Always', op:'=', value:''}], actions: [{type:'Atk Weak', repeat:1}] };
+                }
+
+                var condPart = '';
+                var actionPart = dsl.trim();
+                var arrows = ['\u2192', '->', '=>'];
+                for (var ai = 0; ai < arrows.length; ai++) {
+                    var idx = dsl.indexOf(arrows[ai]);
+                    if (idx >= 0) {
+                        condPart = dsl.substring(0, idx).trim();
+                        actionPart = dsl.substring(idx + arrows[ai].length).trim();
+                        break;
+                    }
+                }
+
+                if (!condPart) {
+                    conditions = [{type:'Always', op:'=', value:''}];
+                } else {
+                    var tokens = condPart.split('&');
+                    for (var ti = 0; ti < tokens.length; ti++) {
+                        var tok = tokens[ti].trim();
+                        if (!tok) continue;
+                        var m = tok.match(/^(\w+)\s*(<=|>=|!=|<|>|=)\s*(\d+\.?\d*)(%?)$/);
+                        if (m) {
+                            var statMap = {'hp':'HP','mp':'MP','bp':'BP','foes':'Foes','foe':'Foes','enemies':'Foes','allies':'Allies','ally':'Allies','turn':'Turn','turns':'Turn'};
+                            var stat = statMap[m[1].toLowerCase()] || m[1];
+                            conditions.push({type: stat, op: m[2], value: m[3]});
+                        } else {
+                            conditions.push({type:'Always', op:'=', value:''});
+                        }
+                    }
+                }
+                if (conditions.length === 0) conditions = [{type:'Always', op:'=', value:''}];
+
+                var parts = actionPart.split(',');
+                for (var pi = 0; pi < parts.length; pi++) {
+                    var part = parts[pi].trim();
+                    if (!part) continue;
+                    var repeat = 1;
+                    var rm = part.match(/\s+x(\d+)$/i);
+                    if (rm) {
+                        repeat = parseInt(rm[1]);
+                        part = part.substring(0, rm.index).trim();
+                    }
+                    var lower = part.toLowerCase();
+                    var actionType = 'Atk Weak';
+                    if (lower === 'atk weak' || lower === 'attack weak') actionType = 'Atk Weak';
+                    else if (lower === 'atk strong' || lower === 'attack strong') actionType = 'Atk Strong';
+                    else if (lower === 'atk random' || lower === 'atk rnd') actionType = 'Atk Random';
+                    else if (lower === 'cure self') actionType = 'Cure Self';
+                    else if (lower === 'cure ally') actionType = 'Cure Ally';
+                    else if (lower === 'guard' || lower === 'defend') actionType = 'Guard';
+                    else if (lower === 'default') actionType = 'Default';
+                    else actionType = part;
+                    actions.push({type: actionType, repeat: repeat});
+                }
+                if (actions.length === 0) actions = [{type:'Atk Weak', repeat:1}];
+
+                return { conditions: conditions, actions: actions };
+            }
+
+            function buildDslFromModal() {
+                var condParts = [];
+                for (var ci = 0; ci < modalState.conditions.length; ci++) {
+                    var c = modalState.conditions[ci];
+                    if (c.type === 'Always') continue;
+                    var suffix = PERCENT_CONDITIONS[c.type] ? '%' : '';
+                    condParts.push(c.type + ' ' + c.op + ' ' + c.value + suffix);
+                }
+
+                var actionParts = [];
+                for (var ai = 0; ai < modalState.actions.length; ai++) {
+                    var a = modalState.actions[ai];
+                    var s = a.type;
+                    if (a.repeat > 1) s += ' x' + a.repeat;
+                    actionParts.push(s);
+                }
+
+                return condParts.join(' & ') + ' -> ' + actionParts.join(', ');
+            }
+
+            function openRuleModal(profileName, ruleIdx) {
+                modalState.profileName = profileName;
+                modalState.ruleIdx = ruleIdx;
+
+                var rules = state.profiles[profileName] || [];
+                var dsl = (ruleIdx >= 0 && ruleIdx < rules.length) ? rules[ruleIdx] : '';
+                var parsed = parseDslToModal(dsl);
+                modalState.conditions = parsed.conditions;
+                modalState.actions = parsed.actions;
+
+                renderModal();
+            }
+
+            function renderModal() {
+                var existing = document.getElementById('abModal');
+                if (existing) existing.remove();
+
+                var overlay = document.createElement('div');
+                overlay.id = 'abModal';
+                overlay.className = 'ab-modal-overlay';
+                overlay.onclick = function(e) { if (e.target === overlay) closeModal(); };
+
+                var title = modalState.ruleIdx >= 0 ? 'Edit Rule' : 'Add Rule';
+
+                var condsHtml = '';
+                for (var ci = 0; ci < modalState.conditions.length; ci++) {
+                    var c = modalState.conditions[ci];
+                    var typeOptions = '';
+                    for (var ti = 0; ti < CONDITION_TYPES.length; ti++) {
+                        var t = CONDITION_TYPES[ti];
+                        typeOptions += '<option value=""' + t + '""' + (t === c.type ? ' selected' : '') + '>' + t + '</option>';
+                    }
+                    var opOptions = '';
+                    for (var oi = 0; oi < OPERATORS.length; oi++) {
+                        var o = OPERATORS[oi];
+                        opOptions += '<option value=""' + escAttr(o) + '""' + (o === c.op ? ' selected' : '') + '>' + escHtml(o) + '</option>';
+                    }
+                    var hideValueOp = c.type === 'Always' ? ' style=""display:none""' : '';
+                    var suffix = PERCENT_CONDITIONS[c.type] ? '<span style=""color:#7777a0;"">%</span>' : '';
+                    var removeBtn = modalState.conditions.length > 1
+                        ? '<button class=""ab-btn-icon ab-btn-delete"" onclick=""removeCond(' + ci + ')"">&times;</button>'
+                        : '';
+
+                    condsHtml += '<div class=""ab-cond-row"">' +
+                        '<select onchange=""updateCondType(' + ci + ', this.value)"">' + typeOptions + '</select>' +
+                        '<select' + hideValueOp + ' id=""condOp' + ci + '"" onchange=""updateCondOp(' + ci + ', this.value)"">' + opOptions + '</select>' +
+                        '<span' + hideValueOp + ' id=""condVal' + ci + '""><input type=""number"" value=""' + escAttr(c.value) + '"" onchange=""updateCondValue(' + ci + ', this.value)"" placeholder=""value"" /> ' + suffix + '</span>' +
+                        removeBtn +
+                        '</div>';
+                }
+
+                var actionsHtml = '';
+                var totalActions = 0;
+                for (var ai = 0; ai < modalState.actions.length; ai++) {
+                    totalActions += modalState.actions[ai].repeat;
+                }
+                for (var ai = 0; ai < modalState.actions.length; ai++) {
+                    var a = modalState.actions[ai];
+                    var typeOptions = '';
+                    for (var ti = 0; ti < ACTION_TYPES.length; ti++) {
+                        var t = ACTION_TYPES[ti];
+                        typeOptions += '<option value=""' + t + '""' + (t === a.type ? ' selected' : '') + '>' + t + '</option>';
+                    }
+                    if (ACTION_TYPES.indexOf(a.type) === -1) {
+                        typeOptions += '<option value=""' + escAttr(a.type) + '"" selected>' + escHtml(a.type) + '</option>';
+                    }
+                    var repeatOptions = '';
+                    for (var rn = 1; rn <= 4; rn++) {
+                        repeatOptions += '<option value=""' + rn + '""' + (rn === a.repeat ? ' selected' : '') + '>' + (rn === 1 ? '1x' : rn + 'x') + '</option>';
+                    }
+                    var removeBtn = modalState.actions.length > 1
+                        ? '<button class=""ab-btn-icon ab-btn-delete"" onclick=""removeAction(' + ai + ')"">&times;</button>'
+                        : '';
+
+                    actionsHtml += '<div class=""ab-action-row"">' +
+                        '<select onchange=""updateActionType(' + ai + ', this.value)"">' + typeOptions + '</select>' +
+                        '<select onchange=""updateActionRepeat(' + ai + ', this.value)"">' + repeatOptions + '</select>' +
+                        removeBtn +
+                        '</div>';
+                }
+
+                var actionWarning = '';
+                if (totalActions > 4) {
+                    actionWarning = '<span class=""ab-warning"" title=""More than 4 actions may exceed available BP"">&#9888; ' + totalActions + ' actions (needs ' + (totalActions-1) + ' BP)</span>';
+                } else if (totalActions > 1) {
+                    actionWarning = '<span style=""color:#7777a0;font-size:0.8em;"">' + totalActions + ' actions (' + (totalActions-1) + ' BP)</span>';
+                }
+
+                var addActionBtn = totalActions < 4
+                    ? '<button class=""ab-add-rule"" onclick=""addAction()"" style=""margin-top:0.3em;"">+ Add Action</button>'
+                    : '';
+
+                var dslPreview = buildDslFromModal();
+
+                overlay.innerHTML =
+                    '<div class=""ab-modal"">' +
+                    '<h3>' + title + ' — ' + escHtml(modalState.profileName) + '</h3>' +
+                    '<div class=""ab-modal-section"">' +
+                    '<div class=""ab-modal-section-title"">Conditions (AND)</div>' +
+                    '<div id=""modalConds"">' + condsHtml + '</div>' +
+                    '<button class=""ab-add-rule"" onclick=""addCond()"" style=""margin-top:0.3em;"">+ Add Condition</button>' +
+                    '</div>' +
+                    '<div class=""ab-modal-section"">' +
+                    '<div class=""ab-modal-section-title"">Actions ' + actionWarning + '</div>' +
+                    '<div id=""modalActions"">' + actionsHtml + '</div>' +
+                    addActionBtn +
+                    '</div>' +
+                    '<div class=""ab-modal-section"">' +
+                    '<div class=""ab-modal-section-title"">DSL Preview</div>' +
+                    '<div class=""ab-dsl-preview"" id=""dslPreview"">' + escHtml(dslPreview) + '</div>' +
+                    '</div>' +
+                    '<div class=""ab-modal-btn-row"">' +
+                    '<button class=""btn-secondary"" onclick=""closeModal()"">Cancel</button>' +
+                    '<button class=""btn-primary"" onclick=""saveRule()"">Save Rule</button>' +
+                    '</div>' +
+                    '</div>';
+
+                document.body.appendChild(overlay);
+            }
+
+            function closeModal() {
+                var m = document.getElementById('abModal');
+                if (m) m.remove();
+            }
+
+            function updateCondType(idx, val) {
+                modalState.conditions[idx].type = val;
+                if (val === 'Always') { modalState.conditions[idx].op = '='; modalState.conditions[idx].value = ''; }
+                renderModal();
+            }
+
+            function updateCondOp(idx, val) {
+                modalState.conditions[idx].op = val;
+                updateDslPreview();
+            }
+
+            function updateCondValue(idx, val) {
+                modalState.conditions[idx].value = val;
+                updateDslPreview();
+            }
+
+            function addCond() {
+                modalState.conditions.push({type:'HP', op:'<', value:'50'});
+                renderModal();
+            }
+
+            function removeCond(idx) {
+                modalState.conditions.splice(idx, 1);
+                if (modalState.conditions.length === 0) modalState.conditions.push({type:'Always', op:'=', value:''});
+                renderModal();
+            }
+
+            function updateActionType(idx, val) {
+                modalState.actions[idx].type = val;
+                updateDslPreview();
+            }
+
+            function updateActionRepeat(idx, val) {
+                modalState.actions[idx].repeat = parseInt(val) || 1;
+                renderModal();
+            }
+
+            function addAction() {
+                var totalActions = 0;
+                for (var i = 0; i < modalState.actions.length; i++) totalActions += modalState.actions[i].repeat;
+                if (totalActions >= 4) { alert('Maximum 4 actions per rule.'); return; }
+                modalState.actions.push({type:'Atk Weak', repeat:1});
+                renderModal();
+            }
+
+            function removeAction(idx) {
+                modalState.actions.splice(idx, 1);
+                if (modalState.actions.length === 0) modalState.actions.push({type:'Atk Weak', repeat:1});
+                renderModal();
+            }
+
+            function updateDslPreview() {
+                var el = document.getElementById('dslPreview');
+                if (el) el.textContent = buildDslFromModal();
+            }
+
+            function saveRule() {
+                var dsl = buildDslFromModal();
+                if (!state.profiles[modalState.profileName]) {
+                    state.profiles[modalState.profileName] = [];
+                }
+                var rules = state.profiles[modalState.profileName];
+                if (modalState.ruleIdx >= 0 && modalState.ruleIdx < rules.length) {
+                    rules[modalState.ruleIdx] = dsl;
+                } else {
+                    rules.push(dsl);
+                }
+                closeModal();
+                renderAll();
+            }
+
+            // ── Party profiles ──
+            function savePartyProfile() {
+                var name = prompt('Save party profile as:', 'Grinding');
+                if (!name || name.trim() === '') return;
+                name = name.trim();
+                state.partyProfiles[name] = state.assignments.slice();
+                renderPartyProfileSelect();
+            }
+
+            function newPartyProfile() {
+                var name = prompt('New party profile name:');
+                if (!name || name.trim() === '') return;
+                name = name.trim();
+                var first = Object.keys(state.profiles)[0] || 'Default';
+                state.partyProfiles[name] = [first, first, first, first];
+                state.assignments = state.partyProfiles[name].slice();
+                renderPartyProfileSelect();
+                renderAll();
+            }
+
+            function loadPartyProfile() {
+                var sel = document.getElementById('partyProfileSelect');
+                var val = sel.value;
+                if (val === '__current__') return;
+                if (state.partyProfiles[val]) {
+                    state.assignments = state.partyProfiles[val].slice();
+                    renderAll();
+                }
+            }
+
+            function renderPartyProfileSelect() {
+                var sel = document.getElementById('partyProfileSelect');
+                var html = '<option value=""__current__"">Current Config</option>';
+                var names = Object.keys(state.partyProfiles);
+                for (var i = 0; i < names.length; i++) {
+                    html += '<option value=""' + escAttr(names[i]) + '"">' + escHtml(names[i]) + '</option>';
+                }
+                sel.innerHTML = html;
+            }
+
+            // ── Save / Reload ──
+            function saveAll() {
+                var yaml = buildYaml();
+                var xhr = new XMLHttpRequest();
+                xhr.open('POST', '/autobattle/editor', true);
+                xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+                xhr.onload = function() {
+                    if (xhr.status === 200) {
+                        document.open();
+                        document.write(xhr.responseText);
+                        document.close();
+                    } else {
+                        alert('Save failed: ' + xhr.statusText);
+                    }
+                };
+                xhr.send('yaml=' + encodeURIComponent(yaml));
+            }
+
+            function reloadFromDisk() {
+                var xhr = new XMLHttpRequest();
+                xhr.open('POST', '/autobattle/reload', true);
+                xhr.onload = function() { location.reload(); };
+                xhr.send();
+            }
+
+            // ── Init ──
+            loadState();
+            </script>
+        ";
     }
 
     // ── Music ───────────────────────────────────────────────────
