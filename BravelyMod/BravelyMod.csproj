@@ -8,6 +8,7 @@
     <RootNamespace>BravelyMod</RootNamespace>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <!-- Copy output to MelonLoader Mods folder -->
     <GameDir Condition="'$(GameDir)' == ''">$(HOME)/.steam/debian-installation/steamapps/common/BDFFHD</GameDir>
     <OutputPath>bin/$(Configuration)</OutputPath>
@@ -57,11 +58,22 @@
     </Reference>
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" Version="16.*">
+      <Private>true</Private>
+    </PackageReference>
+  </ItemGroup>
+
   <!-- Auto-deploy to Mods folder after build -->
   <Target Name="CopyToMods" AfterTargets="Build">
     <Copy SourceFiles="$(OutputPath)/$(AssemblyName).dll"
           DestinationFolder="$(GameDir)/Mods/"
           SkipUnchangedFiles="true" />
+    <!-- Bundle YamlDotNet with the mod since MelonLoader won't resolve it -->
+    <Copy SourceFiles="$(OutputPath)/YamlDotNet.dll"
+          DestinationFolder="$(GameDir)/Mods/"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(OutputPath)/YamlDotNet.dll')" />
   </Target>
 
 </Project>

@@ -1,84 +1,76 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using YamlDotNet.Serialization;
+using YamlDotNet.Serialization.NamingConventions;
 using MelonLoader;
 
 namespace BravelyMod.AutoBattle;
 
 /// <summary>
-/// JSON-serializable config for autobattle rule profiles.
+/// YAML-serializable config for autobattle rule profiles.
 /// Pure C# — no IL2CPP dependencies.
 /// </summary>
 
 // ──────────────────────────────────────────────────────────────
-// JSON DTOs — flat structures that map 1:1 to the JSON schema
+// YAML DTOs — flat structures that map 1:1 to the YAML schema
 // ──────────────────────────────────────────────────────────────
 
 public class ConditionDto
 {
-    [JsonPropertyName("type")]
+    [YamlMember(Alias = "type")]
     public string Type { get; set; } = "Always";
 
-    [JsonPropertyName("op")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [YamlMember(Alias = "op", DefaultValuesHandling = DefaultValuesHandling.OmitNull)]
     public string Op { get; set; }
 
-    [JsonPropertyName("value")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [YamlMember(Alias = "value", DefaultValuesHandling = DefaultValuesHandling.OmitDefaults)]
     public float Value { get; set; }
 }
 
 public class ActionDto
 {
-    [JsonPropertyName("type")]
+    [YamlMember(Alias = "type")]
     public string Type { get; set; } = "Attack";
 
-    [JsonPropertyName("target")]
+    [YamlMember(Alias = "target")]
     public string Target { get; set; } = "WeakestEnemy";
 
-    [JsonPropertyName("abilityId")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
-    public int AbilityId { get; set; }
+    [YamlMember(Alias = "id", DefaultValuesHandling = DefaultValuesHandling.OmitDefaults)]
+    public int Id { get; set; }
 
-    [JsonPropertyName("itemId")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    [YamlMember(Alias = "itemId", DefaultValuesHandling = DefaultValuesHandling.OmitDefaults)]
     public int ItemId { get; set; }
 }
 
 public class RuleDto
 {
-    [JsonPropertyName("name")]
-    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    public string Name { get; set; }
-
-    [JsonPropertyName("conditions")]
+    [YamlMember(Alias = "conditions")]
     public List<ConditionDto> Conditions { get; set; } = new();
 
-    [JsonPropertyName("action")]
+    [YamlMember(Alias = "action")]
     public ActionDto Action { get; set; } = new();
 }
 
 public class ProfileDto
 {
-    [JsonPropertyName("rules")]
+    [YamlMember(Alias = "rules")]
     public List<RuleDto> Rules { get; set; } = new();
 }
 
 public class AutoBattleConfigDto
 {
-    [JsonPropertyName("profiles")]
+    /// <summary>
+    /// Default profile name used for any character without an explicit assignment.
+    /// </summary>
+    [YamlMember(Alias = "activeProfile")]
+    public string ActiveProfile { get; set; } = "Grind Mode";
+
+    [YamlMember(Alias = "profiles")]
     public Dictionary<string, ProfileDto> Profiles { get; set; } = new();
 
     /// <summary>
     /// Maps character slot index (as string key "0"-"3") to a profile name.
     /// </summary>
-    [JsonPropertyName("assignments")]
+    [YamlMember(Alias = "assignments")]
     public Dictionary<string, string> Assignments { get; set; } = new();
-
-    /// <summary>
-    /// Default profile name used for any character without an explicit assignment.
-    /// </summary>
-    [JsonPropertyName("activeProfile")]
-    public string ActiveProfile { get; set; } = "Grind Mode";
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -87,15 +79,18 @@ public class AutoBattleConfigDto
 
 public static class ProfileConfig
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        WriteIndented = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        PropertyNameCaseInsensitive = true,
-    };
+    private static readonly ISerializer YamlSerializer = new SerializerBuilder()
+        .WithNamingConvention(CamelCaseNamingConvention.Instance)
+        .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitDefaults)
+        .Build();
+
+    private static readonly IDeserializer YamlDeserializer = new DeserializerBuilder()
+        .WithNamingConvention(CamelCaseNamingConvention.Instance)
+        .IgnoreUnmatchedProperties()
+        .Build();
 
     /// <summary>
-    /// Load profiles from a JSON file and configure the given <see cref="RuleEngine"/>.
+    /// Load profiles from a YAML file and configure the given <see cref="RuleEngine"/>.
     /// If the file doesn't exist, writes a default config and uses that.
     /// </summary>
     public static void LoadInto(string path, RuleEngine engine)
@@ -105,8 +100,8 @@ public static class ProfileConfig
         {
             try
             {
-                string json = File.ReadAllText(path);
-                dto = JsonSerializer.Deserialize<AutoBattleConfigDto>(json, JsonOpts);
+                string yaml = File.ReadAllText(path);
+                dto = YamlDeserializer.Deserialize<AutoBattleConfigDto>(yaml);
                 if (dto == null)
                 {
                     Melon<Core>.Logger.Warning("[AutoBattle] Config deserialized to null, using defaults");
@@ -136,7 +131,7 @@ public static class ProfileConfig
     }
 
     /// <summary>
-    /// Serialize the given config DTO to JSON and write to disk.
+    /// Serialize the given config DTO to YAML and write to disk.
     /// </summary>
     public static void Save(string path, AutoBattleConfigDto dto)
     {
@@ -146,8 +141,8 @@ public static class ProfileConfig
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
 
-            string json = JsonSerializer.Serialize(dto, JsonOpts);
-            File.WriteAllText(path, json);
+            string yaml = YamlSerializer.Serialize(dto);
+            File.WriteAllText(path, yaml);
             Melon<Core>.Logger.Msg($"[AutoBattle] Config saved to {path}");
         }
         catch (Exception ex)
@@ -172,25 +167,14 @@ public static class ProfileConfig
                     {
                         new()
                         {
-                            Name = "Low HP -> Cure self",
                             Conditions = new List<ConditionDto>
                             {
-                                new() { Type = "HpPercent", Op = "<", Value = 30 }
+                                new() { Type = "HpBelow", Value = 30 }
                             },
-                            Action = new ActionDto { Type = "Ability", AbilityId = 1, Target = "Self" }
+                            Action = new ActionDto { Type = "Ability", Id = 1, Target = "Self" }
                         },
                         new()
                         {
-                            Name = "Single enemy -> Attack strongest",
-                            Conditions = new List<ConditionDto>
-                            {
-                                new() { Type = "EnemyCount", Op = "==", Value = 1 }
-                            },
-                            Action = new ActionDto { Type = "Attack", Target = "StrongestEnemy" }
-                        },
-                        new()
-                        {
-                            Name = "Fallback -> Attack weakest",
                             Conditions = new List<ConditionDto>
                             {
                                 new() { Type = "Always" }
@@ -205,16 +189,14 @@ public static class ProfileConfig
                     {
                         new()
                         {
-                            Name = "Low HP -> Cure weakest ally",
                             Conditions = new List<ConditionDto>
                             {
-                                new() { Type = "HpPercent", Op = "<", Value = 50 }
+                                new() { Type = "HpBelow", Value = 50 }
                             },
-                            Action = new ActionDto { Type = "Ability", AbilityId = 1, Target = "WeakestAlly" }
+                            Action = new ActionDto { Type = "Ability", Id = 1, Target = "WeakestAlly" }
                         },
                         new()
                         {
-                            Name = "Single enemy -> Attack strongest",
                             Conditions = new List<ConditionDto>
                             {
                                 new() { Type = "EnemyCount", Op = "==", Value = 1 }
@@ -223,7 +205,6 @@ public static class ProfileConfig
                         },
                         new()
                         {
-                            Name = "Fallback -> Attack weakest",
                             Conditions = new List<ConditionDto>
                             {
                                 new() { Type = "Always" }
@@ -305,7 +286,7 @@ public static class ProfileConfig
             }
 
             var action = ConvertAction(ruleDto.Action);
-            var rule = new Rule(ruleDto.Name ?? "", action, conditions.ToArray());
+            var rule = new Rule("", action, conditions.ToArray());
             profile.Rules.Add(rule);
         }
         return profile;
@@ -322,7 +303,7 @@ public static class ProfileConfig
     {
         var actionType = ParseActionType(dto.Type);
         var target = ParseTargetSelector(dto.Target);
-        return new BattleAction(actionType, target, dto.AbilityId, dto.ItemId);
+        return new BattleAction(actionType, target, dto.Id, dto.ItemId);
     }
 
     // ──────────────────────────────────────────────────────────

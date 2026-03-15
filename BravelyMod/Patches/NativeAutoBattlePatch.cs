@@ -37,7 +37,7 @@ public static unsafe class NativeAutoBattlePatch
     /// Config file location — next to MelonPreferences.cfg in UserData/.
     /// </summary>
     public static string ConfigPath =>
-        Path.Combine(MelonEnvironment.UserDataDirectory, "BravelyMod_AutoBattle.json");
+        Path.Combine(MelonEnvironment.UserDataDirectory, "BravelyMod_AutoBattle.yaml");
 
     /// <summary>
     /// Access the rule engine for external configuration.
