@@ -151,6 +151,16 @@ public static class ConfigServer
                     responseBody = HandleMusicReload();
                     break;
 
+                case "/music/files" when method == "GET":
+                    responseBody = HandleMusicFiles();
+                    contentType = "application/json; charset=utf-8";
+                    break;
+
+                case "/music/upload" when method == "POST":
+                    responseBody = HandleMusicUpload(request);
+                    contentType = "application/json; charset=utf-8";
+                    break;
+
                 case "/settings" when method == "GET":
                     responseBody = HandleSettingsGet();
                     break;
@@ -1885,6 +1895,54 @@ assignments:
             font-family: 'Consolas', 'Courier New', monospace;
             font-size: 0.85em;
         }}
+        .file-tag-click {{
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+        }}
+        .file-tag-click:hover {{
+            background: #0e3a24;
+            border-color: #4a8a6a;
+        }}
+
+        /* ── Upload area ── */
+        .upload-section {{
+            margin-top: 1em;
+        }}
+        .upload-area {{
+            border: 2px dashed #333355;
+            border-radius: 8px;
+            padding: 1.2em;
+            text-align: center;
+            transition: border-color 0.2s, background 0.2s;
+            margin-top: 0.5em;
+        }}
+        .upload-area-hover {{
+            border-color: #e4a040;
+            background: #1a1a2a;
+        }}
+        .upload-prompt {{
+            cursor: pointer;
+            color: #7777a0;
+            font-size: 0.95em;
+        }}
+        .upload-prompt:hover {{
+            color: #d0d0d8;
+        }}
+        .upload-icon {{
+            font-size: 1.5em;
+            display: block;
+            margin-bottom: 0.3em;
+        }}
+        .upload-status {{
+            margin-top: 0.8em;
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }}
+        .upload-status-info {{ background: #1a1a30; color: #8888bb; }}
+        .upload-status-success {{ background: #0a2a1a; color: #a0e8c0; }}
+        .upload-status-error {{ background: #2a0a0a; color: #e8a0a0; }}
+
         .cue-grid {{
             display: grid;
             grid-template-columns: 1fr 1fr;
