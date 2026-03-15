@@ -599,67 +599,252 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
 
     // ── Music ───────────────────────────────────────────────────
 
-    private static string HandleMusicGet(string messageHtml = null)
+    /// <summary>
+    /// BGM cue definitions: (cue_name, description) for each category.
+    /// </summary>
+    private static readonly (string Name, string Desc)[] BattleBgmCues = new[]
     {
-        string yaml = "";
+        ("bgmbtl_01", "Normal battle"),
+        ("bgmbtl_02", "Boss battle"),
+        ("bgmbtl_03", "Asterisk holder"),
+        ("bgmbtl_04", "Chapter boss"),
+        ("bgmbtl_05", "Event battle"),
+        ("bgmbtl_06", "Miniboss"),
+        ("bgmbtl_07", "Dragon encounter"),
+        ("bgmbtl_08", "Victory fanfare"),
+        ("bgmbtl_09", "Defeat"),
+        ("bgmbtl_10", "Rare encounter"),
+        ("bgmbtl_11", "Nemesis battle"),
+        ("bgmbtl_12", "Ba'al battle"),
+        ("bgmbtl_13", "Friend summon"),
+        ("bgmbtl_14", "Special attack"),
+        ("bgmbtl_15", "Intense battle"),
+        ("bgmbtl_16", "Final boss"),
+    };
+
+    private static readonly (string Category, string Label, (string Name, string Desc)[] Cues)[] CollapsibleBgmCategories = new[]
+    {
+        ("fld", "Field / Overworld", new (string, string)[]
+        {
+            ("bgmfld_01", "Overworld"),
+            ("bgmfld_02", "Overworld (night)"),
+            ("bgmfld_03", "Ship travel"),
+            ("bgmfld_04", "Airship"),
+        }),
+        ("twn", "Towns", new (string, string)[]
+        {
+            ("bgmtwn_01", "Caldisla"),
+            ("bgmtwn_02", "Florem"),
+            ("bgmtwn_03", "Grandship"),
+            ("bgmtwn_04", "Ancheim"),
+            ("bgmtwn_05", "Hartschild"),
+            ("bgmtwn_06", "Starkfort"),
+            ("bgmtwn_07", "Eternia"),
+            ("bgmtwn_08", "Norende"),
+        }),
+        ("dgn", "Dungeons", new (string, string)[]
+        {
+            ("bgmdgn_01", "Ruins"),
+            ("bgmdgn_02", "Temples"),
+            ("bgmdgn_03", "Crystal temple"),
+            ("bgmdgn_04", "Tower"),
+            ("bgmdgn_05", "Endgame dungeon"),
+            ("bgmdgn_06", "Hidden dungeon"),
+            ("bgmdgn_07", "Final dungeon"),
+        }),
+        ("evt", "Events", new (string, string)[]
+        {
+            ("bgmevt_01", "Prologue"),
+            ("bgmevt_02", "Emotional scene"),
+            ("bgmevt_03", "Tense scene"),
+            ("bgmevt_04", "Comedy scene"),
+            ("bgmevt_05", "Revelation"),
+            ("bgmevt_06", "Dark scene"),
+            ("bgmevt_07", "Hope theme"),
+            ("bgmevt_08", "Flashback"),
+            ("bgmevt_09", "Asterisk scene"),
+            ("bgmevt_10", "Crystal awakening"),
+            ("bgmevt_11", "Tragedy"),
+            ("bgmevt_12", "Resolution"),
+            ("bgmevt_13", "Ending part 1"),
+            ("bgmevt_14", "Ending part 2"),
+        }),
+        ("sys", "System", new (string, string)[]
+        {
+            ("bgmsys_01", "Title screen"),
+            ("bgmsys_02", "Menu"),
+            ("bgmsys_03", "Save screen"),
+            ("bgmsys_04", "Job select"),
+            ("bgmsys_05", "Shop"),
+            ("bgmsys_06", "Tutorial"),
+            ("bgmsys_07", "Bestiary"),
+            ("bgmsys_08", "Game over"),
+            ("bgmsys_09", "Level up"),
+            ("bgmsys_10", "Job master"),
+            ("bgmsys_11", "Item jingle"),
+            ("bgmsys_12", "Quest complete"),
+            ("bgmsys_13", "Colony update"),
+            ("bgmsys_14", "Abilink"),
+            ("bgmsys_15", "Friend summon call"),
+            ("bgmsys_16", "Send / receive"),
+            ("bgmsys_17", "Bravely Second"),
+            ("bgmsys_18", "Results screen"),
+            ("bgmsys_19", "Chapter clear"),
+            ("bgmsys_20", "Credits"),
+            ("bgmsys_21", "Staff roll"),
+            ("bgmsys_22", "Post-credits"),
+        }),
+    };
+
+    /// <summary>
+    /// Read current YAML config and return a dictionary of overrides.
+    /// </summary>
+    private static Dictionary<string, string> ReadMusicOverrides()
+    {
+        var overrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         try
         {
             if (File.Exists(MusicConfigPath))
-                yaml = File.ReadAllText(MusicConfigPath);
-            else
-                yaml = "# No music config found. Save to create one.\noverrides:\n  # bgmbtl_01: CustomBGM/your-file.hca\n";
+            {
+                string yaml = File.ReadAllText(MusicConfigPath);
+                if (!string.IsNullOrWhiteSpace(yaml))
+                {
+                    var deserializer = new YamlDotNet.Serialization.DeserializerBuilder()
+                        .WithNamingConvention(YamlDotNet.Serialization.NamingConventions.CamelCaseNamingConvention.Instance)
+                        .IgnoreUnmatchedProperties()
+                        .Build();
+                    var config = deserializer.Deserialize<NativeMusicPatch.MusicConfig>(yaml);
+                    if (config?.Overrides != null)
+                    {
+                        foreach (var kv in config.Overrides)
+                            overrides[kv.Key] = kv.Value;
+                    }
+                }
+            }
         }
         catch (Exception ex)
         {
-            yaml = $"# Error reading file: {ex.Message}";
+            Melon<Core>.Logger.Warning($"[WebConfig] Error reading music overrides: {ex.Message}");
         }
+        return overrides;
+    }
 
+    /// <summary>
+    /// Build HTML table rows for a set of BGM cues.
+    /// </summary>
+    private static string BuildCueTableRows((string Name, string Desc)[] cues, Dictionary<string, string> overrides)
+    {
+        var sb = new StringBuilder();
+        foreach (var (name, desc) in cues)
+        {
+            bool hasOverride = overrides.TryGetValue(name, out string overridePath) && !string.IsNullOrWhiteSpace(overridePath);
+            string statusClass = hasOverride ? "bgm-status-custom" : "bgm-status-default";
+            string statusText = hasOverride ? "Custom" : "Default";
+            string pathValue = hasOverride ? WebUtility.HtmlEncode(overridePath) : "";
+            string pathDisplay = hasOverride ? WebUtility.HtmlEncode(overridePath) : "<span class=\"dimmed\">&mdash;</span>";
+            string encodedName = WebUtility.HtmlEncode(name);
+
+            sb.Append($@"<tr class=""bgm-row"" data-cue=""{encodedName}"">
+                <td class=""mono bgm-cue-name"">{encodedName}</td>
+                <td class=""bgm-desc"">{WebUtility.HtmlEncode(desc)}</td>
+                <td><span class=""{statusClass}"">{statusText}</span></td>
+                <td class=""bgm-path-cell"">
+                    <span class=""bgm-path-display"" id=""display_{encodedName}"">{pathDisplay}</span>
+                    <div class=""bgm-path-edit"" id=""edit_{encodedName}"" style=""display:none"">
+                        <input type=""text"" class=""bgm-path-input"" id=""input_{encodedName}"" value=""{pathValue}"" placeholder=""CustomBGM/filename.hca"" />
+                    </div>
+                </td>
+                <td class=""bgm-actions"">
+                    <button type=""button"" class=""btn-sm btn-set"" onclick=""toggleEdit('{encodedName}')"">{(hasOverride ? "Change" : "Set")}</button>
+                    {(hasOverride ? $"<button type=\"button\" class=\"btn-sm btn-remove\" onclick=\"removeCue('{encodedName}')\">Remove</button>" : "")}
+                </td>
+            </tr>");
+        }
+        return sb.ToString();
+    }
+
+    private static string HandleMusicGet(string messageHtml = null)
+    {
         string msgBlock = messageHtml ?? "";
+        var overrides = ReadMusicOverrides();
 
-        // List available HCA files (clickable to copy path)
-        var hcaHtml = new StringBuilder();
-        hcaHtml.Append("<div class=\"section-label\">Available HCA Files in CustomBGM/ <span class=\"dimmed\">(click to copy path)</span></div>");
+        // Count active overrides
+        int activeCount = overrides.Count;
+
+        // Build available HCA files list
+        var availableFiles = new List<string>();
         try
         {
             string bgmDir = CustomBgmDir;
             if (!string.IsNullOrEmpty(bgmDir) && Directory.Exists(bgmDir))
             {
-                var files = Directory.GetFiles(bgmDir, "*.hca")
+                availableFiles = Directory.GetFiles(bgmDir, "*.hca")
                     .Select(f => Path.GetFileName(f))
                     .OrderBy(f => f)
-                    .ToArray();
-
-                if (files.Length > 0)
-                {
-                    hcaHtml.Append("<div class=\"file-list\" id=\"fileList\">");
-                    foreach (var f in files)
-                    {
-                        var path = $"CustomBGM/{WebUtility.HtmlEncode(f)}";
-                        hcaHtml.Append($"<span class=\"file-tag file-tag-click\" onclick=\"copyPath('{path}')\" title=\"Click to copy path\">{path}</span> ");
-                    }
-                    hcaHtml.Append("</div>");
-                }
-                else
-                {
-                    hcaHtml.Append("<p class=\"dimmed\" id=\"fileList\">No .hca files found in CustomBGM/ folder.</p>");
-                }
-            }
-            else
-            {
-                hcaHtml.Append("<p class=\"dimmed\" id=\"fileList\">CustomBGM/ folder not found at StreamingAssets path.</p>");
+                    .ToList();
             }
         }
-        catch (Exception ex)
+        catch { }
+
+        // Build available files HTML
+        var availHtml = new StringBuilder();
+        if (availableFiles.Count > 0)
         {
-            hcaHtml.Append($"<p class=\"dimmed\" id=\"fileList\">Error scanning folder: {WebUtility.HtmlEncode(ex.Message)}</p>");
+            availHtml.Append("<div class=\"file-list\" id=\"fileList\">");
+            foreach (var f in availableFiles)
+            {
+                var path = $"CustomBGM/{WebUtility.HtmlEncode(f)}";
+                availHtml.Append($"<span class=\"file-tag file-tag-click\" onclick=\"assignFile('{path}')\" title=\"Click to assign to selected cue\">{path}</span> ");
+            }
+            availHtml.Append("</div>");
+        }
+        else
+        {
+            availHtml.Append("<p class=\"dimmed\" id=\"fileList\">No .hca files found in CustomBGM/ folder.</p>");
         }
 
-        // Upload music widget — uses the Linux-side music conversion server on port 8889
-        hcaHtml.Append(@"
+        // Build battle BGM table
+        string battleRows = BuildCueTableRows(BattleBgmCues, overrides);
+
+        // Build collapsible sections
+        var collapseSb = new StringBuilder();
+        foreach (var (catId, label, cues) in CollapsibleBgmCategories)
+        {
+            int catOverrides = 0;
+            foreach (var (cn, _) in cues)
+                if (overrides.ContainsKey(cn) && !string.IsNullOrWhiteSpace(overrides[cn]))
+                    catOverrides++;
+
+            string badge = catOverrides > 0 ? $" <span class=\"bgm-cat-badge\">{catOverrides} custom</span>" : "";
+            string rows = BuildCueTableRows(cues, overrides);
+
+            collapseSb.Append($@"
+                <div class=""bgm-category"">
+                    <div class=""bgm-category-header"" onclick=""toggleCategory('{catId}')"">
+                        <span class=""bgm-toggle-arrow"" id=""arrow_{catId}"">&#9654;</span>
+                        <span class=""bgm-category-label"">{WebUtility.HtmlEncode(label)}</span>{badge}
+                    </div>
+                    <div class=""bgm-category-body"" id=""cat_{catId}"" style=""display:none"">
+                        <table class=""bgm-table"">
+                            <thead><tr>
+                                <th>Cue Name</th><th>Description</th><th>Status</th><th>Override Path</th><th>Actions</th>
+                            </tr></thead>
+                            <tbody>{rows}</tbody>
+                        </table>
+                    </div>
+                </div>");
+        }
+
+        return WrapHtml("Music Config", "music", $@"
+            <h2>Music Overrides</h2>
+            <p class=""subtitle"">Replace BGM cues with custom HCA audio files. Files are resolved relative to StreamingAssets/.
+                <span class=""bgm-summary"">{activeCount} override(s) active</span></p>
+
+            {msgBlock}
+
+            <!-- Upload Section -->
             <div class=""upload-section"">
-                <div class=""section-label"">Upload Music File</div>
-                <p class=""cs-note"">Upload <strong>.mp3 / .wav / .ogg / .flac</strong> files — they are automatically converted to HCA via the music conversion server.
-                    You can also upload <strong>.hca</strong> files directly.</p>
+                <div class=""section-label"">Upload Audio</div>
                 <div id=""serverStatus"" class=""msg msg-warning"" style=""display:none"">
                     Music conversion server not detected on port 8889. Start it with:
                     <code>./scripts/start_music_server.sh</code>
@@ -676,87 +861,39 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                     <div style=""margin-bottom:8px;color:#e4a040"">Or paste a file path from your system:</div>
                     <div style=""display:flex;gap:8px"">
                         <input type=""text"" id=""pathInput"" placeholder=""/home/user/music/song.mp3"" style=""flex:1;padding:8px;background:#0f0f1a;border:1px solid #333;color:#eee;border-radius:4px;font-family:monospace""/>
-                        <button onclick=""convertFromPath()"" style=""padding:8px 16px;background:#e4a040;color:#000;border:none;border-radius:4px;cursor:pointer;font-weight:bold"">Convert</button>
+                        <button type=""button"" onclick=""convertFromPath()"" style=""padding:8px 16px;background:#e4a040;color:#000;border:none;border-radius:4px;cursor:pointer;font-weight:bold"">Convert</button>
                     </div>
                     <div id=""pathStatus"" style=""margin-top:8px;display:none""></div>
                 </div>
             </div>
-        ");
 
-        // convertFromPath JS is embedded in the page HTML above via onclick
+            <!-- Available Files -->
+            <div class=""section-label"" style=""margin-top:1.5em"">Available HCA Files <span class=""dimmed"">(click to assign to selected cue)</span></div>
+            {availHtml}
 
-        // Build cue name reference
-        var cueRefHtml = @"
-            <div class=""section-label"">BGM Cue Reference</div>
-            <div class=""cue-grid"">
-                <div class=""cue-group"">
-                    <div class=""cs-title"">Battle</div>
-                    <code>bgmbtl_01</code> Normal battle<br/>
-                    <code>bgmbtl_02</code> Boss battle<br/>
-                    <code>bgmbtl_03</code> Asterisk holder<br/>
-                    <code>bgmbtl_08</code> Victory fanfare<br/>
-                    <code>bgmbtl_10</code> Rare encounter<br/>
-                    <code>bgmbtl_16</code> Final boss
-                </div>
-                <div class=""cue-group"">
-                    <div class=""cs-title"">Field/Town</div>
-                    <code>bgmfld_01</code> Overworld<br/>
-                    <code>bgmfld_04</code> Airship<br/>
-                    <code>bgmtwn_01</code> Caldisla<br/>
-                    <code>bgmtwn_02</code> Florem<br/>
-                    <code>bgmtwn_03</code> Grandship
-                </div>
-                <div class=""cue-group"">
-                    <div class=""cs-title"">Dungeon</div>
-                    <code>bgmdgn_01</code> Ruins<br/>
-                    <code>bgmdgn_02</code> Temples<br/>
-                    <code>bgmdgn_05</code> Endgame
-                </div>
-                <div class=""cue-group"">
-                    <div class=""cs-title"">Event/System</div>
-                    <code>bgmevt_01</code> Prologue<br/>
-                    <code>bgmsys_01</code> Title screen<br/>
-                    <code>bgmsys_08</code> Game over
-                </div>
-            </div>
-        ";
+            <!-- Battle BGM Table (expanded by default) -->
+            <div class=""section-label"" style=""margin-top:1.5em"">Battle BGM Overrides</div>
+            <table class=""bgm-table"">
+                <thead><tr>
+                    <th>Cue Name</th><th>Description</th><th>Status</th><th>Override Path</th><th>Actions</th>
+                </tr></thead>
+                <tbody>{battleRows}</tbody>
+            </table>
 
-        return WrapHtml("Music Config", "music", $@"
-            <h2>Music Overrides</h2>
-            <p class=""subtitle"">Replace BGM cues with custom HCA audio files. Files are resolved relative to StreamingAssets/.</p>
+            <!-- Collapsible Categories -->
+            {collapseSb}
 
-            {msgBlock}
-            {hcaHtml}
-
-            <div class=""editor-layout"">
-                <div class=""editor-main"">
-                    <div class=""section-label"">Music Config Editor</div>
-                    <form method=""POST"" action=""/music"">
-                        <textarea name=""yaml"" rows=""28"" spellcheck=""false"">{WebUtility.HtmlEncode(yaml)}</textarea>
-                        <div class=""btn-row"">
-                            <button type=""submit"" class=""btn-primary"">Save &amp; Reload</button>
-                            <button type=""button"" class=""btn-secondary"" onclick=""doReloadMusic()"">Reload from Disk</button>
-                        </div>
-                    </form>
-                </div>
-                <div class=""editor-sidebar"">
-                    {cueRefHtml}
-                    <div class=""section-label"" style=""margin-top:1.5em;"">Config Format</div>
-                    <div class=""cheatsheet"">
-                        <pre class=""cs-example"">overrides:
-  bgmbtl_01: CustomBGM/my-battle.hca
-  bgmbtl_02: CustomBGM/boss-theme.hca</pre>
-                        <p class=""cs-note"">Paths are relative to StreamingAssets/.</p>
-                    </div>
-                </div>
+            <!-- Save Button -->
+            <div class=""btn-row bgm-save-row"">
+                <button type=""button"" class=""btn-primary"" onclick=""saveAllOverrides()"">Save &amp; Reload</button>
+                <button type=""button"" class=""btn-secondary"" onclick=""doReloadMusic()"">Reload from Disk</button>
+                <span id=""saveStatus"" class=""bgm-save-status""></span>
             </div>
 
             <script>
-            // Music conversion server runs on Linux side (port 8889).
-            // HCA uploads go to the C# server (:8888), everything else goes to the
-            // Python conversion server (:8889) which handles ffmpeg + PyCriCodecs.
             var MUSIC_SERVER = 'http://localhost:8889';
             var musicServerAvailable = false;
+            var selectedCue = null; // currently selected cue for file assignment
 
             // Check if the music conversion server is running
             (function checkServer() {{
@@ -776,23 +913,191 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
             }})();
 
             function doReloadMusic() {{
-                fetch('/music/reload', {{method:'POST'}}).then(()=>location.reload());
+                fetch('/music/reload', {{method:'POST'}}).then(function() {{ location.reload(); }});
             }}
 
-            function copyPath(path) {{
-                navigator.clipboard.writeText(path).then(function() {{
-                    showToast('Copied: ' + path);
-                }}).catch(function() {{
-                    // Fallback: insert at cursor in the YAML editor
-                    var ta = document.querySelector('textarea[name=yaml]');
-                    if (ta) {{
-                        var start = ta.selectionStart;
-                        ta.value = ta.value.substring(0, start) + path + ta.value.substring(ta.selectionEnd);
-                        ta.selectionStart = ta.selectionEnd = start + path.length;
-                        ta.focus();
-                        showToast('Inserted: ' + path);
+            // Toggle inline edit for a cue row
+            function toggleEdit(cue) {{
+                var display = document.getElementById('display_' + cue);
+                var edit = document.getElementById('edit_' + cue);
+                var input = document.getElementById('input_' + cue);
+                if (edit.style.display === 'none') {{
+                    display.style.display = 'none';
+                    edit.style.display = 'block';
+                    input.focus();
+                    selectedCue = cue;
+                    // Highlight the row
+                    highlightSelectedRow(cue);
+                }} else {{
+                    applyEdit(cue);
+                }}
+            }}
+
+            function highlightSelectedRow(cue) {{
+                // Remove previous selection
+                document.querySelectorAll('.bgm-row-selected').forEach(function(r) {{
+                    r.classList.remove('bgm-row-selected');
+                }});
+                var row = document.querySelector('tr[data-cue=""' + cue + '""]');
+                if (row) row.classList.add('bgm-row-selected');
+            }}
+
+            // Apply the edit (commit text input value)
+            function applyEdit(cue) {{
+                var input = document.getElementById('input_' + cue);
+                var display = document.getElementById('display_' + cue);
+                var edit = document.getElementById('edit_' + cue);
+                var val = input.value.trim();
+
+                display.style.display = '';
+                edit.style.display = 'none';
+
+                if (val) {{
+                    display.innerHTML = escHtml(val);
+                    updateRowStatus(cue, true, val);
+                }} else {{
+                    display.innerHTML = '<span class=""dimmed"">&mdash;</span>';
+                    updateRowStatus(cue, false, '');
+                }}
+            }}
+
+            // Handle Enter/Escape in edit inputs
+            document.addEventListener('keydown', function(e) {{
+                if (e.target.classList.contains('bgm-path-input')) {{
+                    if (e.key === 'Enter') {{
+                        e.preventDefault();
+                        var cue = e.target.id.replace('input_', '');
+                        applyEdit(cue);
+                    }} else if (e.key === 'Escape') {{
+                        var cue = e.target.id.replace('input_', '');
+                        var display = document.getElementById('display_' + cue);
+                        var edit = document.getElementById('edit_' + cue);
+                        display.style.display = '';
+                        edit.style.display = 'none';
+                    }}
+                }}
+            }});
+
+            // Remove override from a cue
+            function removeCue(cue) {{
+                var input = document.getElementById('input_' + cue);
+                var display = document.getElementById('display_' + cue);
+                var edit = document.getElementById('edit_' + cue);
+                input.value = '';
+                display.innerHTML = '<span class=""dimmed"">&mdash;</span>';
+                display.style.display = '';
+                edit.style.display = 'none';
+                updateRowStatus(cue, false, '');
+            }}
+
+            // Update the status badge and action buttons for a row
+            function updateRowStatus(cue, hasOverride, path) {{
+                var row = document.querySelector('tr[data-cue=""' + cue + '""]');
+                if (!row) return;
+                var statusCell = row.children[2];
+                var actionsCell = row.children[4];
+
+                if (hasOverride) {{
+                    statusCell.innerHTML = '<span class=""bgm-status-custom"">Custom</span>';
+                    actionsCell.innerHTML =
+                        '<button type=""button"" class=""btn-sm btn-set"" onclick=""toggleEdit(\'' + cue + '\')"">Change</button>' +
+                        '<button type=""button"" class=""btn-sm btn-remove"" onclick=""removeCue(\'' + cue + '\')"">Remove</button>';
+                }} else {{
+                    statusCell.innerHTML = '<span class=""bgm-status-default"">Default</span>';
+                    actionsCell.innerHTML =
+                        '<button type=""button"" class=""btn-sm btn-set"" onclick=""toggleEdit(\'' + cue + '\')"">Set</button>';
+                }}
+            }}
+
+            // Assign an available file to a cue
+            function assignFile(path) {{
+                if (!selectedCue) {{
+                    // If no cue is selected, find the first cue without an override
+                    var rows = document.querySelectorAll('.bgm-row');
+                    for (var i = 0; i < rows.length; i++) {{
+                        var c = rows[i].getAttribute('data-cue');
+                        var inp = document.getElementById('input_' + c);
+                        if (inp && !inp.value.trim()) {{
+                            selectedCue = c;
+                            break;
+                        }}
+                    }}
+                    if (!selectedCue) {{
+                        showToast('Click Set on a cue first, then click a file to assign it.');
+                        return;
+                    }}
+                }}
+
+                var input = document.getElementById('input_' + selectedCue);
+                var display = document.getElementById('display_' + selectedCue);
+                var edit = document.getElementById('edit_' + selectedCue);
+
+                input.value = path;
+                display.innerHTML = escHtml(path);
+                display.style.display = '';
+                edit.style.display = 'none';
+                updateRowStatus(selectedCue, true, path);
+                showToast('Assigned ' + path + ' to ' + selectedCue);
+                selectedCue = null;
+                document.querySelectorAll('.bgm-row-selected').forEach(function(r) {{
+                    r.classList.remove('bgm-row-selected');
+                }});
+            }}
+
+            // Collect all overrides from the table and POST to /music/save
+            function saveAllOverrides() {{
+                var overrides = {{}};
+                document.querySelectorAll('.bgm-row').forEach(function(row) {{
+                    var cue = row.getAttribute('data-cue');
+                    var input = document.getElementById('input_' + cue);
+                    if (input && input.value.trim()) {{
+                        overrides[cue] = input.value.trim();
                     }}
                 }});
+
+                var statusEl = document.getElementById('saveStatus');
+                statusEl.textContent = 'Saving...';
+                statusEl.className = 'bgm-save-status bgm-save-info';
+
+                fetch('/music/save', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ overrides: overrides }})
+                }})
+                .then(function(r) {{ return r.json(); }})
+                .then(function(d) {{
+                    if (d.error) {{
+                        statusEl.textContent = 'Error: ' + d.error;
+                        statusEl.className = 'bgm-save-status bgm-save-error';
+                    }} else {{
+                        statusEl.textContent = d.message || 'Saved!';
+                        statusEl.className = 'bgm-save-status bgm-save-success';
+                        setTimeout(function() {{ statusEl.textContent = ''; }}, 3000);
+                    }}
+                }})
+                .catch(function(err) {{
+                    statusEl.textContent = 'Save failed: ' + err;
+                    statusEl.className = 'bgm-save-status bgm-save-error';
+                }});
+            }}
+
+            // Toggle collapsible category
+            function toggleCategory(catId) {{
+                var body = document.getElementById('cat_' + catId);
+                var arrow = document.getElementById('arrow_' + catId);
+                if (body.style.display === 'none') {{
+                    body.style.display = 'block';
+                    arrow.innerHTML = '&#9660;';
+                }} else {{
+                    body.style.display = 'none';
+                    arrow.innerHTML = '&#9654;';
+                }}
+            }}
+
+            function escHtml(s) {{
+                var d = document.createElement('div');
+                d.textContent = s;
+                return d.innerHTML;
             }}
 
             function showToast(msg) {{
@@ -821,7 +1126,6 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                 var isHca = ext === '.hca';
 
                 if (isHca) {{
-                    // HCA files go directly to the C# server (small, no conversion needed)
                     showUploadStatus('Uploading ' + file.name + '...', 'info');
                     var fd = new FormData();
                     fd.append('file', file);
@@ -831,7 +1135,7 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                             if (data.error) {{
                                 showUploadStatus('Error: ' + data.error, 'error');
                             }} else {{
-                                showUploadStatus('Uploaded: ' + data.path + ' (' + formatSize(data.size) + ')', 'success');
+                                showUploadStatus(data.path, 'success'); showCopyBtn(data.path);
                                 refreshFileList();
                             }}
                         }})
@@ -839,7 +1143,6 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                             showUploadStatus('Upload failed: ' + err, 'error');
                         }});
                 }} else {{
-                    // Non-HCA: send to the Python music conversion server on port 8889
                     if (!musicServerAvailable) {{
                         showUploadStatus('Music conversion server is not running. Start it: ./scripts/start_music_server.sh', 'error');
                         return;
@@ -856,20 +1159,20 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                                 showUploadStatus('Converting ' + file.name + ' to HCA... (this may take a moment)', 'info');
                                 pollConversion(data.name);
                             }} else if (data.success) {{
-                                showUploadStatus('Ready: ' + data.path + ' (' + formatSize(data.size) + ')', 'success');
+                                showUploadStatus(data.path, 'success'); showCopyBtn(data.path);
                                 refreshFileList();
                             }}
                         }})
                         .catch(function(err) {{
-                            showUploadStatus('Upload failed. Is the music server running? (./scripts/start_music_server.sh) Error: ' + err, 'error');
+                            showUploadStatus('Upload failed. Is the music server running? Error: ' + err, 'error');
                         }});
                 }}
-                input.value = ''; // reset so same file can be re-uploaded
+                input.value = '';
             }}
 
             function pollConversion(name) {{
                 var attempts = 0;
-                var maxAttempts = 120; // 120 seconds max
+                var maxAttempts = 120;
                 var timer = setInterval(function() {{
                     attempts++;
                     fetch(MUSIC_SERVER + '/convert-status?name=' + encodeURIComponent(name))
@@ -885,7 +1188,7 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                                 }}
                             }} else if (attempts >= maxAttempts) {{
                                 clearInterval(timer);
-                                showUploadStatus('Conversion timed out. Try running: ./scripts/convert_music.sh &lt;file&gt;', 'error');
+                                showUploadStatus('Conversion timed out.', 'error');
                             }}
                         }})
                         .catch(function() {{
@@ -977,6 +1280,16 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                 el.className = 'upload-status upload-status-' + type;
             }}
 
+            function showCopyBtn(path) {{
+                var el = document.getElementById('uploadStatus');
+                var btn = document.createElement('button');
+                btn.textContent = 'Copy Path';
+                btn.style.cssText = 'margin-left:8px;padding:2px 10px;background:#e4a040;color:#000;border:none;border-radius:3px;cursor:pointer;font-size:12px';
+                btn.onclick = function() {{ navigator.clipboard.writeText(path); btn.textContent = 'Copied!'; }};
+                el.appendChild(document.createTextNode(' '));
+                el.appendChild(btn);
+            }}
+
             function formatSize(bytes) {{
                 if (bytes < 1024) return bytes + ' B';
                 if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
@@ -984,7 +1297,6 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
             }}
 
             function refreshFileList() {{
-                // Try the Python server first (CORS-enabled), fall back to C# server
                 var url = musicServerAvailable ? MUSIC_SERVER + '/files' : '/music/files';
                 fetch(url)
                     .then(function(r) {{ return r.json(); }})
@@ -994,7 +1306,7 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                         if (data.files && data.files.length > 0) {{
                             var html = '';
                             data.files.forEach(function(f) {{
-                                html += '<span class=""file-tag file-tag-click"" onclick=""copyPath(\'' + f.path + '\')"" title=""Click to copy path"">' + f.path + '</span> ';
+                                html += '<span class=""file-tag file-tag-click"" onclick=""assignFile(\'' + f.path + '\')"" title=""Click to assign to selected cue"">' + f.path + '</span> ';
                             }});
                             container.innerHTML = html;
                             container.className = 'file-list';
@@ -1004,7 +1316,6 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                         }}
                     }})
                     .catch(function() {{
-                        // If Python server failed, try C# server
                         if (url !== '/music/files') {{
                             fetch('/music/files')
                                 .then(function(r) {{ return r.json(); }})
@@ -1014,7 +1325,7 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                                     if (data.files && data.files.length > 0) {{
                                         var html = '';
                                         data.files.forEach(function(f) {{
-                                            html += '<span class=""file-tag file-tag-click"" onclick=""copyPath(\'' + f.path + '\')"" title=""Click to copy path"">' + f.path + '</span> ';
+                                            html += '<span class=""file-tag file-tag-click"" onclick=""assignFile(\'' + f.path + '\')"" title=""Click to assign to selected cue"">' + f.path + '</span> ';
                                         }});
                                         container.innerHTML = html;
                                         container.className = 'file-list';
@@ -1105,6 +1416,125 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
             Melon<Core>.Logger.Warning($"[WebConfig] Music reload error: {ex.Message}");
         }
         return HandleMusicGet(MsgBox("Reloaded music config from disk.", "success"));
+    }
+
+    /// <summary>
+    /// POST /music/save - Accepts JSON { overrides: { cue: path, ... } } from the table UI.
+    /// Builds YAML, saves it, and hot-reloads the music config.
+    /// </summary>
+    private static string HandleMusicSave(HttpListenerRequest request)
+    {
+        try
+        {
+            string body;
+            using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+            {
+                body = reader.ReadToEnd();
+            }
+
+            if (string.IsNullOrWhiteSpace(body))
+                return "{\"error\":\"Empty request body\"}";
+
+            // Simple JSON parsing for { "overrides": { "key": "value", ... } }
+            // We parse manually to avoid adding a JSON library dependency
+            var overrides = new Dictionary<string, string>();
+            int ovIdx = body.IndexOf("\"overrides\"", StringComparison.Ordinal);
+            if (ovIdx >= 0)
+            {
+                int braceStart = body.IndexOf('{', ovIdx);
+                if (braceStart >= 0)
+                {
+                    int depth = 0;
+                    int braceEnd = -1;
+                    for (int i = braceStart; i < body.Length; i++)
+                    {
+                        if (body[i] == '{') depth++;
+                        else if (body[i] == '}') { depth--; if (depth == 0) { braceEnd = i; break; } }
+                    }
+                    if (braceEnd > braceStart)
+                    {
+                        string inner = body.Substring(braceStart + 1, braceEnd - braceStart - 1);
+                        // Parse key-value pairs: "key":"value"
+                        int pos = 0;
+                        while (pos < inner.Length)
+                        {
+                            int keyStart = inner.IndexOf('"', pos);
+                            if (keyStart < 0) break;
+                            int keyEnd = inner.IndexOf('"', keyStart + 1);
+                            if (keyEnd < 0) break;
+                            string key = inner.Substring(keyStart + 1, keyEnd - keyStart - 1);
+
+                            int valStart = inner.IndexOf('"', keyEnd + 1);
+                            if (valStart < 0) break;
+                            int valEnd = inner.IndexOf('"', valStart + 1);
+                            if (valEnd < 0) break;
+                            string val = inner.Substring(valStart + 1, valEnd - valStart - 1);
+
+                            // Unescape basic JSON escapes
+                            val = val.Replace("\\\\", "\\").Replace("\\\"", "\"").Replace("\\/", "/");
+
+                            if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(val))
+                                overrides[key] = val;
+
+                            pos = valEnd + 1;
+                        }
+                    }
+                }
+            }
+
+            // Build YAML
+            var yamlSb = new StringBuilder();
+            yamlSb.AppendLine("# BravelyMod Music Config");
+            yamlSb.AppendLine("# Generated by Music Manager UI");
+            yamlSb.AppendLine("overrides:");
+            if (overrides.Count == 0)
+            {
+                yamlSb.AppendLine("  # No overrides configured");
+            }
+            else
+            {
+                foreach (var kv in overrides.OrderBy(x => x.Key))
+                {
+                    yamlSb.AppendLine($"  {kv.Key}: {kv.Value}");
+                }
+            }
+
+            string yaml = yamlSb.ToString();
+
+            // Validate paths
+            var warnings = new List<string>();
+            string bgmDir = "";
+            try { bgmDir = UnityEngine.Application.streamingAssetsPath; } catch { }
+
+            foreach (var kv in overrides)
+            {
+                if (!string.IsNullOrEmpty(bgmDir))
+                {
+                    var fullPath = Path.Combine(bgmDir, kv.Value);
+                    if (!File.Exists(fullPath))
+                        warnings.Add($"File not found: {kv.Value}");
+                }
+            }
+
+            // Save and reload
+            File.WriteAllText(MusicConfigPath, yaml);
+            NativeMusicPatch.ReloadConfig();
+
+            Melon<Core>.Logger.Msg($"[WebConfig] Music config saved via table UI: {overrides.Count} override(s)");
+
+            if (warnings.Count > 0)
+            {
+                string warnMsg = $"Saved {overrides.Count} override(s) with warnings: " + string.Join("; ", warnings);
+                return $"{{\"success\":true,\"message\":\"{EscapeJson(warnMsg)}\",\"warnings\":{warnings.Count}}}";
+            }
+
+            return $"{{\"success\":true,\"message\":\"Saved {overrides.Count} override(s). Music config reloaded.\"}}";
+        }
+        catch (Exception ex)
+        {
+            Melon<Core>.Logger.Warning($"[WebConfig] Music save error: {ex.Message}");
+            return $"{{\"error\":\"{EscapeJson(ex.Message)}\"}}";
+        }
     }
 
     /// <summary>
@@ -2464,6 +2894,187 @@ assignments:
             padding: 0.8em;
             font-size: 0.85em;
             line-height: 1.7;
+        }}
+
+        /* ── BGM Override Table ── */
+        .bgm-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0.5em 0 1.5em;
+            font-size: 0.9em;
+        }}
+        .bgm-table thead th {{
+            background: #16162a;
+            color: #7777a0;
+            font-size: 0.8em;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 600;
+            padding: 10px 12px;
+            border-bottom: 2px solid #2a2a44;
+            text-align: left;
+            position: sticky;
+            top: 0;
+        }}
+        .bgm-table tbody tr {{
+            border-bottom: 1px solid #1a1a30;
+            transition: background 0.15s;
+        }}
+        .bgm-table tbody tr:nth-child(even) {{
+            background: #12122a;
+        }}
+        .bgm-table tbody tr:nth-child(odd) {{
+            background: #0f0f1a;
+        }}
+        .bgm-table tbody tr:hover {{
+            background: #1a1a35;
+        }}
+        .bgm-row-selected {{
+            background: #1a2a3a !important;
+            outline: 1px solid #5dade2;
+        }}
+        .bgm-table td {{
+            padding: 8px 12px;
+            vertical-align: middle;
+        }}
+        .bgm-cue-name {{
+            font-family: 'Consolas', 'Courier New', monospace;
+            color: #70c0e8;
+            font-weight: 600;
+            white-space: nowrap;
+        }}
+        .bgm-desc {{
+            color: #9999bb;
+        }}
+        .bgm-status-custom {{
+            color: #2ecc71;
+            font-weight: 600;
+            font-size: 0.85em;
+        }}
+        .bgm-status-custom::before {{
+            content: '\2713 ';
+        }}
+        .bgm-status-default {{
+            color: #666688;
+            font-size: 0.85em;
+        }}
+        .bgm-path-cell {{
+            min-width: 200px;
+            max-width: 350px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 0.85em;
+            color: #a0e8c0;
+            word-break: break-all;
+        }}
+        .bgm-path-input {{
+            width: 100%;
+            padding: 6px 8px;
+            background: #0f0f1a;
+            color: #d0d0d8;
+            border: 1px solid #5dade2;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 0.95em;
+        }}
+        .bgm-path-input:focus {{
+            outline: none;
+            border-color: #e4a040;
+        }}
+        .bgm-actions {{
+            white-space: nowrap;
+        }}
+        .btn-sm {{
+            padding: 4px 10px;
+            font-size: 0.8em;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-weight: 600;
+            margin-right: 4px;
+            transition: background 0.15s;
+        }}
+        .btn-set {{
+            background: #2a3a5a;
+            color: #70c0e8;
+        }}
+        .btn-set:hover {{
+            background: #3a4a6a;
+        }}
+        .btn-remove {{
+            background: #3a1a1a;
+            color: #e8a0a0;
+        }}
+        .btn-remove:hover {{
+            background: #4a2a2a;
+        }}
+
+        /* BGM category collapsible sections */
+        .bgm-category {{
+            margin-bottom: 0.5em;
+        }}
+        .bgm-category-header {{
+            display: flex;
+            align-items: center;
+            gap: 0.6em;
+            padding: 10px 14px;
+            background: #16162a;
+            border: 1px solid #2a2a44;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+            user-select: none;
+        }}
+        .bgm-category-header:hover {{
+            background: #1a1a35;
+            border-color: #5dade2;
+        }}
+        .bgm-toggle-arrow {{
+            color: #7777a0;
+            font-size: 0.8em;
+            width: 1em;
+            text-align: center;
+        }}
+        .bgm-category-label {{
+            font-weight: 600;
+            color: #d0d0d8;
+            font-size: 0.95em;
+        }}
+        .bgm-cat-badge {{
+            font-size: 0.75em;
+            background: #0a2a1a;
+            color: #2ecc71;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-weight: 600;
+        }}
+        .bgm-category-body {{
+            padding: 0.5em 0 0;
+        }}
+
+        /* BGM save row */
+        .bgm-save-row {{
+            margin-top: 1.5em;
+            padding-top: 1em;
+            border-top: 1px solid #2a2a44;
+            align-items: center;
+        }}
+        .bgm-save-status {{
+            font-size: 0.9em;
+            margin-left: 1em;
+        }}
+        .bgm-save-info {{ color: #8888bb; }}
+        .bgm-save-success {{ color: #2ecc71; font-weight: 600; }}
+        .bgm-save-error {{ color: #e74c3c; }}
+
+        .bgm-summary {{
+            display: inline-block;
+            background: #0a2a1a;
+            color: #2ecc71;
+            padding: 2px 10px;
+            border-radius: 3px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin-left: 0.5em;
         }}
 
         /* ── Settings page ── */
