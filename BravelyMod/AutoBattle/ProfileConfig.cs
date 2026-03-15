@@ -151,6 +151,11 @@ public static class ProfileConfig
                     "BP > 2 & HP > 50% \u2192 Atk Strong x4",
                     "\u2192 Atk Weak"
                 },
+                ["Tank"] = new List<string>
+                {
+                    "HP < 25% \u2192 Cure Self, Guard",
+                    "\u2192 Guard"
+                },
                 ["Default"] = new List<string>()
             },
             Assignments = new List<string> { "Attack 4x", "Attack 4x", "Healer", "Attack 4x" }
