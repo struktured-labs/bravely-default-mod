@@ -81,8 +81,9 @@ public static unsafe class NativeBattleSpeedPatch
     {
         try
         {
-            if (Core.SpeedModEnabled.Value && speed >= 1.0f)
+            if (Core.SpeedModEnabled.Value && speed >= 4.0f)
             {
+                // Only boost at max vanilla speed (4x) — leave 1x and 2x alone
                 float mult = Core.BattleSpeedMultiplier.Value;
                 float newSpeed = speed * mult;
                 _tsLogCount++;

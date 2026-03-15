@@ -105,6 +105,10 @@ public class Core : MelonMod
         // Patches.NativeButtonSwapPatch.Apply();
         if (SpeedModEnabled.Value)
             Patches.NativeBattleSpeedPatch.Apply();
+        if (ForceSceneSkip.Value)
+            Patches.NativeSceneSkipPatch.Apply();
+        if (ColonyModEnabled.Value)
+            Patches.NativeColonyPatch.Apply();
 
         // Harmony patches (registered but may not intercept on Unity 6 — keeping for future compat)
         _harmony = new HarmonyLib.Harmony("com.struktured.bravelymod");
