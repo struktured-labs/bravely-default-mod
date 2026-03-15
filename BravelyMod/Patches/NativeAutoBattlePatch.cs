@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using MelonLoader;
 using MelonLoader.NativeUtils;
+using MelonLoader.Utils;
 using BravelyMod.AutoBattle;
 
 namespace BravelyMod.Patches;
@@ -33,12 +34,21 @@ public static unsafe class NativeAutoBattlePatch
     private const int MaxLogLines = 20;
 
     /// <summary>
+    /// Config file location — next to MelonPreferences.cfg in UserData/.
+    /// </summary>
+    public static string ConfigPath =>
+        Path.Combine(MelonEnvironment.UserDataDirectory, "BravelyMod_AutoBattle.json");
+
+    /// <summary>
     /// Access the rule engine for external configuration.
     /// </summary>
     public static RuleEngine RuleEngine => _ruleEngine;
 
     public static void Apply()
     {
+        // Load profiles from config (creates default file if missing)
+        ProfileConfig.LoadInto(ConfigPath, _ruleEngine);
+
         HookProcessAutoBattle();
         ResolveAddAttackCommand();
     }

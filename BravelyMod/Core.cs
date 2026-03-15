@@ -71,7 +71,7 @@ public class Core : MelonMod
         DamageCapEnabled = Config.CreateEntry("DamageCapEnabled", true, "Enable damage cap removal");
         DamageCapOverride = Config.CreateEntry("DamageCapOverride", 999999, "Damage Cap Override");
 
-        BpModEnabled = Config.CreateEntry("BpModEnabled", false, "Enable BP modifications (WIP)");
+        BpModEnabled = Config.CreateEntry("BpModEnabled", true, "Enable BP modifications");
         BpLimitOverride = Config.CreateEntry("BpLimitOverride", 9, "BP Limit Override");
         BpPerTurn = Config.CreateEntry("BpPerTurn", 2, "BP gained per turn (vanilla=1)");
 
