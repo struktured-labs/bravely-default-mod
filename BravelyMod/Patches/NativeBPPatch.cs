@@ -35,20 +35,28 @@ public static unsafe class NativeBPPatch
     private delegate int d_GetBP(nint instance, nint methodInfo);
 
     private static NativeHook<d_SetBP> _setBPHook;
+    private static NativeHook<d_SetBP> _setBPBaseHook;
     private static NativeHook<d_IsEnableBrave> _braveHook;
     private static NativeHook<d_AddBPByTeam> _addBPHook;
     private static NativeHook<d_GetBP> _getBPHook;
+    private static NativeHook<d_GetBP> _getBPBaseHook;
 
     private static d_SetBP _pSetBP;
+    private static d_SetBP _pSetBPBase;
     private static d_IsEnableBrave _pBrave;
     private static d_AddBPByTeam _pAddBP;
     private static d_GetBP _pGetBP;
+    private static d_GetBP _pGetBPBase;
 
     public static void Apply()
     {
+        // Hook ALL SetBP variants — vtable dispatch may go to any of them
         Hook(typeof(Il2Cpp.BtlChara),
             "NativeMethodInfoPtr_SetBP_Public_Virtual_New_Int32_Int32_0",
-            "SetBP", ref _pSetBP, SetBP_Hook, out _setBPHook);
+            "SetBP(VNew)", ref _pSetBP, SetBP_Hook, out _setBPHook);
+        Hook(typeof(Il2Cpp.BtlChara),
+            "NativeMethodInfoPtr_SetBP_Public_Virtual_Int32_Int32_0",
+            "SetBP(V)", ref _pSetBPBase, SetBP_HookBase, out _setBPBaseHook);
 
         Hook(typeof(Il2Cpp.gfc),
             "NativeMethodInfoPtr_IsEnableBrave_Public_Static_Boolean_Int32_BtlLayoutCtrl_0",
@@ -60,7 +68,10 @@ public static unsafe class NativeBPPatch
 
         Hook(typeof(Il2Cpp.BtlChara),
             "NativeMethodInfoPtr_GetBP_Public_Virtual_New_Int32_0",
-            "GetBP", ref _pGetBP, GetBP_Hook, out _getBPHook);
+            "GetBP(VNew)", ref _pGetBP, GetBP_Hook, out _getBPHook);
+        Hook(typeof(Il2Cpp.BtlChara),
+            "NativeMethodInfoPtr_GetBP_Public_Virtual_Int32_0",
+            "GetBP(V)", ref _pGetBPBase, GetBP_HookBase, out _getBPBaseHook);
     }
 
     private static void Hook<T>(System.Type type, string fieldName, string name,
@@ -123,6 +134,36 @@ public static unsafe class NativeBPPatch
         }
     }
 
+    private static int SetBP_HookBase(nint instance, int bp, nint methodInfo)
+    {
+        try
+        {
+            if (!Core.BpModEnabled.Value)
+                return _setBPBaseHook.Trampoline(instance, bp, methodInfo);
+
+            int limit = Core.BpLimitOverride.Value;
+            int result = _setBPBaseHook.Trampoline(instance, bp, methodInfo);
+            int clampedBP = System.Math.Max(-limit, System.Math.Min(limit, bp));
+
+            nint cmdCtrl = *(nint*)(instance + 0x140);
+            if (cmdCtrl != 0)
+            {
+                *(int*)(cmdCtrl + 0x18) = clampedBP;
+                *(int*)(cmdCtrl + 0x1C) = clampedBP;
+            }
+
+            _setBPLog++;
+            if (_setBPLog <= 10)
+                Melon<Core>.Logger.Msg($"[BP] SetBP_Base({bp}) -> {clampedBP}");
+
+            return result;
+        }
+        catch
+        {
+            try { return _setBPBaseHook.Trampoline(instance, bp, methodInfo); } catch { return bp; }
+        }
+    }
+
     private static int _getBPLog = 0;
 
     private static int GetBP_Hook(nint instance, nint methodInfo)
@@ -142,6 +183,24 @@ public static unsafe class NativeBPPatch
             return _getBPHook.Trampoline(instance, methodInfo);
         }
         catch { try { return _getBPHook.Trampoline(instance, methodInfo); } catch { return 0; } }
+    }
+
+    private static int GetBP_HookBase(nint instance, nint methodInfo)
+    {
+        try
+        {
+            nint cmdCtrl = *(nint*)(instance + 0x140);
+            if (cmdCtrl != 0 && Core.BpModEnabled.Value)
+            {
+                int bp = *(int*)(cmdCtrl + 0x18);
+                _getBPLog++;
+                if (_getBPLog <= 5)
+                    Melon<Core>.Logger.Msg($"[BP] GetBP_Base -> {bp}");
+                return bp;
+            }
+            return _getBPBaseHook.Trampoline(instance, methodInfo);
+        }
+        catch { try { return _getBPBaseHook.Trampoline(instance, methodInfo); } catch { return 0; } }
     }
 
     private static int _braveLog = 0;

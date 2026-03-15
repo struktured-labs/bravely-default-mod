@@ -46,6 +46,9 @@ public class Core : MelonMod
     public static MelonPreferences_Entry<bool> WalkSpeedModEnabled { get; private set; }
     public static MelonPreferences_Entry<float> WalkSpeedMultiplier { get; private set; }
 
+    // Custom battle music
+    public static MelonPreferences_Entry<bool> CustomBattleMusicEnabled { get; private set; }
+
     private static bool _initialized = false;
     private static HarmonyLib.Harmony _harmony;
 
@@ -68,7 +71,7 @@ public class Core : MelonMod
         DamageCapEnabled = Config.CreateEntry("DamageCapEnabled", true, "Enable damage cap removal");
         DamageCapOverride = Config.CreateEntry("DamageCapOverride", 999999, "Damage Cap Override");
 
-        BpModEnabled = Config.CreateEntry("BpModEnabled", true, "Enable BP modifications");
+        BpModEnabled = Config.CreateEntry("BpModEnabled", false, "Enable BP modifications (WIP)");
         BpLimitOverride = Config.CreateEntry("BpLimitOverride", 9, "BP Limit Override");
         BpPerTurn = Config.CreateEntry("BpPerTurn", 2, "BP gained per turn (vanilla=1)");
 
@@ -85,6 +88,8 @@ public class Core : MelonMod
 
         WalkSpeedModEnabled = Config.CreateEntry("WalkSpeedModEnabled", true, "Enable speed walk (skip trotter)");
         WalkSpeedMultiplier = Config.CreateEntry("WalkSpeedMultiplier", 2.5f, "Walk/dash speed multiplier (applied on top of dash)");
+
+        CustomBattleMusicEnabled = Config.CreateEntry("CustomBattleMusicEnabled", true, "Replace normal battle BGM with custom music");
 
         // Native hooks (these actually work on Unity 6 IL2CPP)
         LoggerInstance.Msg("Applying native hooks...");
@@ -109,6 +114,8 @@ public class Core : MelonMod
             Patches.NativeSceneSkipPatch.Apply();
         if (ColonyModEnabled.Value)
             Patches.NativeColonyPatch.Apply();
+        if (CustomBattleMusicEnabled.Value)
+            Patches.NativeMusicPatch.Apply();
 
         // Harmony patches (registered but may not intercept on Unity 6 — keeping for future compat)
         _harmony = new HarmonyLib.Harmony("com.struktured.bravelymod");
@@ -148,6 +155,7 @@ public class Core : MelonMod
         LoggerInstance.Msg($"  Scene skip:{ForceSceneSkip.Value}");
         LoggerInstance.Msg($"  Support$:  {(SupportCostModEnabled.Value ? $"{SupportCostOverride.Value}" : "OFF")}");
         LoggerInstance.Msg($"  WalkSpeed: {(WalkSpeedModEnabled.Value ? $"x{WalkSpeedMultiplier.Value}" : "OFF")}");
+        LoggerInstance.Msg($"  BattleBGM: {(CustomBattleMusicEnabled.Value ? "custom" : "OFF")}");
         LoggerInstance.Msg("Edit UserData/MelonPreferences.cfg to toggle features.");
     }
 

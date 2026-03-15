@@ -41,6 +41,11 @@
       <HintPath>$(GameDir)/MelonLoader/Il2CppAssemblies/Il2CppSystem.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- CriWare runtime (for CriAtomExPlayer file-based playback) -->
+    <Reference Include="Il2CppCriMw.CriWare.Runtime">
+      <HintPath>$(GameDir)/MelonLoader/Il2CppAssemblies/Il2CppCriMw.CriWare.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <!-- Unity engine modules -->
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>$(GameDir)/MelonLoader/Il2CppAssemblies/UnityEngine.CoreModule.dll</HintPath>
