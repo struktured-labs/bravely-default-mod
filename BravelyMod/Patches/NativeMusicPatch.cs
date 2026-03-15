@@ -291,7 +291,7 @@ overrides:
                 if ((int)status >= 3) // PlayEnd or Error
                 {
                     _customPlayer.SetFile(null, _currentHcaPath);
-                    _customPlayer.SetVolume(0.5f);
+                    _customPlayer.SetVolume(0.7f);
                     _currentPlayback = _customPlayer.Start();
                 }
             }
@@ -309,7 +309,7 @@ overrides:
             if (_customPlayer == null || !_customPlayer.isAvailable) return 0;
 
             _customPlayer.SetFile(null, hcaPath);
-            _customPlayer.SetVolume(0.5f);
+            _customPlayer.SetVolume(0.7f);
             var playback = _customPlayer.Start();
             _customPlaying = true;
             Melon<Core>.Logger.Msg($"[Music] Custom playback started (id={playback.id})");

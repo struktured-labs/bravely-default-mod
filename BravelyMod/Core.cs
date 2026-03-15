@@ -76,7 +76,7 @@ public class Core : MelonMod
         BpPerTurn = Config.CreateEntry("BpPerTurn", 2, "BP gained per turn (vanilla=1)");
 
         SpeedModEnabled = Config.CreateEntry("SpeedModEnabled", true, "Enable battle speed mod");
-        BattleSpeedMultiplier = Config.CreateEntry("BattleSpeedMultiplier", 2.0f, "Battle Speed Multiplier (applied on top of in-game speed)");
+        BattleSpeedMultiplier = Config.CreateEntry("BattleSpeedMultiplier", 4.0f, "Battle Speed Multiplier (applied on top of in-game speed)");
 
         ColonyModEnabled = Config.CreateEntry("ColonyModEnabled", true, "Enable colony speed mod");
         ColonySpeedMultiplier = Config.CreateEntry("ColonySpeedMultiplier", 10.0f, "Colony Speed Multiplier");
@@ -116,6 +116,7 @@ public class Core : MelonMod
             Patches.NativeSceneSkipPatch.Apply();
         if (ColonyModEnabled.Value)
             Patches.NativeColonyPatch.Apply();
+        Patches.NativeEncounterPatch.Apply();
         if (CustomBattleMusicEnabled.Value)
             Patches.NativeMusicPatch.Apply();
 

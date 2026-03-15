@@ -326,11 +326,46 @@ public static unsafe class NativeBPPatch
 
     // ── IsEnableBrave hook (passthrough — memory patch handles constants) ──
 
+    private static System.Collections.Generic.Dictionary<int, int> _braveCount = new();
+
+    /// <summary>Call at turn start to reset brave counters</summary>
+    public static void ResetBraveCounters() => _braveCount.Clear();
+
     private static byte IsEnableBrave_Hook(int partyindex, nint pBtlLayoutCtrl, nint methodInfo)
     {
         try
         {
-            return _braveHook.Trampoline(partyindex, pBtlLayoutCtrl, methodInfo);
+            // Let original decide first
+            var orig = _braveHook.Trampoline(partyindex, pBtlLayoutCtrl, methodInfo);
+
+            if (!Core.BpModEnabled.Value) return orig;
+
+            // Original said yes — but enforce our own action cap
+            if (orig != 0)
+            {
+                if (!_braveCount.ContainsKey(partyindex))
+                    _braveCount[partyindex] = 0;
+
+                int maxActions = Core.BpLimitOverride.Value + 1; // BP 9 = 10 actions max
+                if (_braveCount[partyindex] >= maxActions - 1) // -1 because first action is free
+                    return 0; // cap reached
+
+                _braveCount[partyindex]++;
+                return 1;
+            }
+
+            // Original said no — also enforce our extended limit
+            // Maybe we have more BP than vanilla allows, so override
+            if (!_braveCount.ContainsKey(partyindex))
+                _braveCount[partyindex] = 0;
+
+            int limit = Core.BpLimitOverride.Value + 1;
+            if (_braveCount[partyindex] < limit - 1)
+            {
+                _braveCount[partyindex]++;
+                return 1;
+            }
+            return 0;
         }
         catch { return 0; }
     }
