@@ -112,38 +112,7 @@ public static unsafe class NativeResultDisplayPatch
 
     private static void Hook(nint instance, nint resultData, nint methodInfo)
     {
-        // Call original — it clones ResultData to this+0x70
+        // Just passthrough — CreateResultData already multiplied at the source
         try { _hook.Trampoline(instance, resultData, methodInfo); } catch { return; }
-
-        if (!Core.ExpBoostEnabled.Value) return;
-
-        try
-        {
-            // Access the cloned ResultData at this+0x70
-            nint clonedData = *(nint*)(instance + 0x70);
-            if (clonedData == 0) return;
-
-            // ResultData fields: gil=0x10, exp=0x14, jobexp=0x18
-            var gilPtr = (int*)(clonedData + 0x10);
-            var expPtr = (int*)(clonedData + 0x14);
-            var jexpPtr = (int*)(clonedData + 0x18);
-
-            float expMult = Core.ExpMultiplier.Value;
-            float jpMult = Core.JexpMultiplier.Value;
-            float goldMult = Core.GoldMultiplier.Value;
-
-            int origExp = *expPtr;
-            int origJexp = *jexpPtr;
-            int origGil = *gilPtr;
-
-            *expPtr = (int)(origExp * expMult);
-            *jexpPtr = (int)(origJexp * jpMult);
-            *gilPtr = (int)(origGil * goldMult);
-
-            _logCount++;
-            if (_logCount <= 3)
-                Melon<Core>.Logger.Msg($"[ResultDisplay] exp {origExp}->{*expPtr}, jp {origJexp}->{*jexpPtr}, gil {origGil}->{*gilPtr}");
-        }
-        catch { }
     }
 }
