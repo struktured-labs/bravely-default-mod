@@ -340,32 +340,9 @@ public static unsafe class NativeBPPatch
 
             if (!Core.BpModEnabled.Value) return orig;
 
-            // Original said yes — but enforce our own action cap
-            if (orig != 0)
-            {
-                if (!_braveCount.ContainsKey(partyindex))
-                    _braveCount[partyindex] = 0;
-
-                int maxActions = Core.BpLimitOverride.Value + 1; // BP 9 = 10 actions max
-                if (_braveCount[partyindex] >= maxActions - 1) // -1 because first action is free
-                    return 0; // cap reached
-
-                _braveCount[partyindex]++;
-                return 1;
-            }
-
-            // Original said no — also enforce our extended limit
-            // Maybe we have more BP than vanilla allows, so override
-            if (!_braveCount.ContainsKey(partyindex))
-                _braveCount[partyindex] = 0;
-
-            int limit = Core.BpLimitOverride.Value + 1;
-            if (_braveCount[partyindex] < limit - 1)
-            {
-                _braveCount[partyindex]++;
-                return 1;
-            }
-            return 0;
+            // Cap at vanilla 4 actions (3 braves + 1 default)
+            // BP can accumulate to 9 but actions per turn stays at 4
+            return orig;
         }
         catch { return 0; }
     }

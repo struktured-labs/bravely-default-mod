@@ -66,7 +66,7 @@ public class Core : MelonMod
         ExpBoostEnabled = Config.CreateEntry("ExpBoostEnabled", true, "Enable EXP/JP/Gold multiplier");
         ExpMultiplier = Config.CreateEntry("ExpMultiplier", 10.0f, "EXP Multiplier");
         JexpMultiplier = Config.CreateEntry("JexpMultiplier", 1000.0f, "JP Multiplier");
-        GoldMultiplier = Config.CreateEntry("GoldMultiplier", 10.0f, "Gold Multiplier");
+        GoldMultiplier = Config.CreateEntry("GoldMultiplier", 100.0f, "Gold Multiplier");
 
         DamageCapEnabled = Config.CreateEntry("DamageCapEnabled", true, "Enable damage cap removal");
         DamageCapOverride = Config.CreateEntry("DamageCapOverride", 999999, "Damage Cap Override");
@@ -116,7 +116,8 @@ public class Core : MelonMod
             Patches.NativeSceneSkipPatch.Apply();
         if (ColonyModEnabled.Value)
             Patches.NativeColonyPatch.Apply();
-        Patches.NativeEncounterPatch.Apply();
+        // Disabled: encounter hook may cause UI issues
+        // Patches.NativeEncounterPatch.Apply();
         if (CustomBattleMusicEnabled.Value)
             Patches.NativeMusicPatch.Apply();
 
