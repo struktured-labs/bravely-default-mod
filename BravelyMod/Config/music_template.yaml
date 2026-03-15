@@ -1,0 +1,144 @@
+# =============================================================================
+# Bravely Default: Flying Fairy HD - Music Override Configuration
+# =============================================================================
+#
+# Place custom HCA audio files in the StreamingAssets/CustomBGM/ folder.
+# Each entry maps a CriWare cue name to a relative path from StreamingAssets.
+#
+# Usage:
+#   - Uncomment a line and set the path to override that BGM cue.
+#   - The game loads music from BDIO_BGM.acb via CriWare (CriAtomExPlayer).
+#   - Currently only BtlSoundManager.PlayBGM is hooked (battle music).
+#     Field/town/event BGM hooks can be added in future patches.
+#
+# All 85 cue names extracted from BDIO_BGM.acb are listed below.
+# =============================================================================
+
+overrides:
+  # ===========================================================================
+  # Battle Music (bgmbtl_*)
+  # ===========================================================================
+  # Played via BtlSoundManager.PlayBGM when entering combat.
+  # The MonsterParty.btb NAME_BGM field determines which cue plays per encounter.
+  #
+  bgmbtl_01: CustomBGM/battle-melody-2.hca  # Normal battle (2990 encounters use this)
+  # bgmbtl_02:                               # Boss battle theme (144 encounters - chapter bosses)
+  # bgmbtl_03:                               # Asterisk holder battle (272 encounters - job bosses)
+  # bgmbtl_04:                               # Special battle 1 (SpecialBGM.btb - scripted boss phase)
+  # bgmbtl_05:                               # Special battle 2 (SpecialBGM.btb - scripted boss phase)
+  # bgmbtl_06:                               # Special battle 3 (SpecialBGM.btb - scripted boss phase)
+  # bgmbtl_07:                               # Special battle 4 (SpecialBGM.btb - scripted boss phase)
+  # bgmbtl_08:                               # Battle results / victory fanfare (BGM_RESULT_NAME constant)
+  # bgmbtl_09:                               # Battle results variant (referenced in stringliteral.json)
+  # bgmbtl_10:                               # Rare encounter battle (8 encounters)
+  # bgmbtl_11:                               # Late-game battle variant 1 (4 encounters)
+  # bgmbtl_12:                               # Late-game battle variant 2 (4 encounters)
+  # bgmbtl_13:                               # Late-game battle variant 3 (4 encounters)
+  # bgmbtl_14:                               # Late-game battle variant 4 (2 encounters)
+  # bgmbtl_15:                               # Endgame battle theme (28 encounters)
+  # bgmbtl_16:                               # Final boss / special endgame (8 encounters)
+
+  # ===========================================================================
+  # Field / Overworld Music (bgmfld_*)
+  # ===========================================================================
+  # Played when exploring the world map and field areas.
+  # Resolved via GetMapBgmName from MapTable.btb.
+  #
+  # bgmfld_01:                               # Overworld theme (Caldisla region)
+  # bgmfld_02:                               # Overworld theme variant 2
+  # bgmfld_03:                               # Overworld theme variant 3
+  # bgmfld_04:                               # Overworld theme variant 4 (late-game/airship region)
+
+  # ===========================================================================
+  # Town Music (bgmtwn_*)
+  # ===========================================================================
+  # Played in town/city maps. Mapped via MapTable.btb per location.
+  #
+  # bgmtwn_01:                               # Caldisla / Ancheim area towns (TW1000-TW1002)
+  # bgmtwn_02:                               # Florem region towns (TW1100-TW1103)
+  # bgmtwn_03:                               # Grandship / Hartschild region (TW1300-TW1303)
+  # bgmtwn_04:                               # Eisenberg region towns
+  # bgmtwn_05:                               # Eternia region towns (TW1400-TW1403)
+  # bgmtwn_06:                               # Special town (TW1800)
+  # bgmtwn_07:                               # Yulyana region / Sage's town (TW1201)
+  # bgmtwn_08:                               # Town theme variant 8
+
+  # ===========================================================================
+  # Dungeon Music (bgmdgn_*)
+  # ===========================================================================
+  # Played in dungeon/cave/ruin maps. Mapped via MapTable.btb.
+  #
+  # bgmdgn_01:                               # Dungeon theme 1 (Lontano Villa, ruins - ND1300, ND2100, ND3303)
+  # bgmdgn_02:                               # Dungeon theme 2 (temples, caves - ND1503, ND2201, ND2602, ND2701)
+  # bgmdgn_03:                               # Dungeon theme 3 (Harena Ruins, misc - ND1402, ND1702, ND2000)
+  # bgmdgn_04:                               # Dungeon theme 4
+  # bgmdgn_05:                               # Dungeon theme 5 (ND3202 - endgame dungeon)
+  # bgmdgn_07:                               # Dungeon theme 7 (special dungeon)
+
+  # ===========================================================================
+  # Event / Cutscene Music (bgmevt_*)
+  # ===========================================================================
+  # Played during story events, cutscenes, and scripted sequences.
+  # Triggered via AMX_PlayBGM script commands.
+  #
+  # bgmevt_01:                               # Event theme 1 (story intro/prologue)
+  # bgmevt_02:                               # Event theme 2 (emotional scene)
+  # bgmevt_03:                               # Event theme 3 (tension/drama)
+  # bgmevt_04:                               # Event theme 4 (also used in TW2002 map)
+  # bgmevt_05:                               # Event theme 5 (plot revelation)
+  # bgmevt_06:                               # Event theme 6 (conflict)
+  # bgmevt_07:                               # Event theme 7 (sorrow/loss)
+  # bgmevt_08:                               # Event theme 8 (hope/resolve)
+  # bgmevt_09:                               # Event theme 9 (climax buildup)
+  # bgmevt_10:                               # Event theme 10 (finale moments)
+  # bgmevt_12:                               # Event theme 12 (special scene)
+  # bgmevt_13:                               # Event theme 13 (JP voice track)
+  # bgmevt_13_en:                            # Event theme 13 (EN voice track variant)
+  # bgmevt_14:                               # Event theme 14 (endgame event)
+
+  # ===========================================================================
+  # System / Menu Music (bgmsys_*)
+  # ===========================================================================
+  # Played on title screen, menus, save screen, game over, etc.
+  # bgmsys_01 is also used as battle BGM for 46 encounters (silence/no-music fights).
+  #
+  # bgmsys_01:                               # Title screen / silence marker (also 46 battle encounters)
+  # bgmsys_02:                               # System theme 2
+  # bgmsys_03:                               # System theme 3
+  # bgmsys_04:                               # System theme 4
+  # bgmsys_05:                               # System theme 5 (menu-related)
+  # bgmsys_06:                               # System theme 6
+  # bgmsys_07:                               # System theme 7 (save/load screen)
+  # bgmsys_08:                               # System theme 8 (game over)
+  # bgmsys_09:                               # System theme 9 (configuration)
+  # bgmsys_10:                               # System theme 10
+  # bgmsys_11:                               # System theme 11
+  # bgmsys_12:                               # System theme 12
+  # bgmsys_13:                               # System theme 13
+  # bgmsys_14:                               # System theme 14
+  # bgmsys_15:                               # System theme 15
+  # bgmsys_16:                               # System theme 16
+  # bgmsys_17:                               # System theme 17
+  # bgmsys_18:                               # System theme 18
+  # bgmsys_19:                               # System theme 19
+  # bgmsys_20:                               # System theme 20
+  # bgmsys_21:                               # System theme 21
+  # bgmsys_22:                               # System theme 22
+
+  # ===========================================================================
+  # Minigame / R2D Music (R2D_BGM_*)
+  # ===========================================================================
+  # Used by the Bravely Second card game and dance minigame.
+  # These are separate from the main BDIO_BGM.acb cue sheet.
+  #
+  # R2D_BGM_Dance_01:                        # Dance minigame track 1
+  # R2D_BGM_Dance_02:                        # Dance minigame track 2
+  # R2D_BGM_SelectSND_01:                    # Card game selection music 1
+  # R2D_BGM_SelectSND_02:                    # Card game selection music 2
+  # R2D_BGM_SelectSND_03:                    # Card game selection music 3
+  # R2D_BGM_SelectSND_04:                    # Card game selection music 4
+  # R2D_BGM_SelectSND_05:                    # Card game selection music 5
+  # R2D_BGM_Tutorial_01:                     # Minigame tutorial music
+  # R2D_BGM_Video_01:                        # Minigame video/intro music 1
+  # R2D_BGM_Video_02:                        # Minigame video/intro music 2
+  # R2D_BGM_Video_03:                        # Minigame video/intro music 3

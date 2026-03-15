@@ -108,19 +108,97 @@ public static unsafe class NativeMusicPatch
             }
             else
             {
-                // Create default config
-                var config = new MusicConfig
-                {
-                    Overrides = new Dictionary<string, string>
-                    {
-                        ["bgmbtl_01"] = "CustomBGM/battle-melody-2.hca"
-                    }
-                };
-                var serializer = new SerializerBuilder()
-                    .WithNamingConvention(CamelCaseNamingConvention.Instance)
-                    .Build();
-                System.IO.File.WriteAllText(ConfigPath, serializer.Serialize(config));
-                Melon<Core>.Logger.Msg($"[Music] Created default config: {ConfigPath}");
+                // Create default config with all 85 BDIO_BGM.acb cues documented
+                var defaultYaml = @"# Bravely Default: Flying Fairy HD - Music Override Configuration
+# Place custom HCA audio files in StreamingAssets/CustomBGM/
+# Uncomment a line and set the path to override that BGM cue.
+# See Config/music_template.yaml for full documentation.
+
+overrides:
+  # === Battle Music ===
+  bgmbtl_01: CustomBGM/battle-melody-2.hca  # Normal battle (most encounters)
+  # bgmbtl_02:   # Boss battle
+  # bgmbtl_03:   # Asterisk holder battle
+  # bgmbtl_04:   # Special battle 1 (scripted boss phase)
+  # bgmbtl_05:   # Special battle 2 (scripted boss phase)
+  # bgmbtl_06:   # Special battle 3 (scripted boss phase)
+  # bgmbtl_07:   # Special battle 4 (scripted boss phase)
+  # bgmbtl_08:   # Victory fanfare / battle results
+  # bgmbtl_09:   # Battle results variant
+  # bgmbtl_10:   # Rare encounter battle
+  # bgmbtl_11:   # Late-game battle 1
+  # bgmbtl_12:   # Late-game battle 2
+  # bgmbtl_13:   # Late-game battle 3
+  # bgmbtl_14:   # Late-game battle 4
+  # bgmbtl_15:   # Endgame battle
+  # bgmbtl_16:   # Final boss / special endgame
+
+  # === Field / Overworld ===
+  # bgmfld_01:   # Overworld theme (Caldisla region)
+  # bgmfld_02:   # Overworld variant 2
+  # bgmfld_03:   # Overworld variant 3
+  # bgmfld_04:   # Overworld variant 4 (airship)
+
+  # === Towns ===
+  # bgmtwn_01:   # Caldisla / Ancheim towns
+  # bgmtwn_02:   # Florem region
+  # bgmtwn_03:   # Grandship / Hartschild
+  # bgmtwn_04:   # Eisenberg towns
+  # bgmtwn_05:   # Eternia region
+  # bgmtwn_06:   # Special town
+  # bgmtwn_07:   # Yulyana / Sage's town
+  # bgmtwn_08:   # Town variant 8
+
+  # === Dungeons ===
+  # bgmdgn_01:   # Ruins / Lontano Villa
+  # bgmdgn_02:   # Temples / Caves
+  # bgmdgn_03:   # Harena Ruins / misc
+  # bgmdgn_04:   # Dungeon 4
+  # bgmdgn_05:   # Endgame dungeon
+  # bgmdgn_07:   # Special dungeon
+
+  # === Events / Cutscenes ===
+  # bgmevt_01:   # Prologue / story intro
+  # bgmevt_02:   # Emotional scene
+  # bgmevt_03:   # Tension / drama
+  # bgmevt_04:   # Plot event
+  # bgmevt_05:   # Revelation
+  # bgmevt_06:   # Conflict
+  # bgmevt_07:   # Sorrow / loss
+  # bgmevt_08:   # Hope / resolve
+  # bgmevt_09:   # Climax buildup
+  # bgmevt_10:   # Finale moments
+  # bgmevt_12:   # Special scene
+  # bgmevt_13:   # Event 13 (JP voice)
+  # bgmevt_13_en: # Event 13 (EN voice)
+  # bgmevt_14:   # Endgame event
+
+  # === System / Menu ===
+  # bgmsys_01:   # Title screen / silence
+  # bgmsys_02:   # System 2
+  # bgmsys_03:   # System 3
+  # bgmsys_04:   # System 4
+  # bgmsys_05:   # Menu related
+  # bgmsys_06:   # System 6
+  # bgmsys_07:   # Save/load screen
+  # bgmsys_08:   # Game over
+  # bgmsys_09:   # Configuration
+  # bgmsys_10:   # System 10
+  # bgmsys_11:   # System 11
+  # bgmsys_12:   # System 12
+  # bgmsys_13:   # System 13
+  # bgmsys_14:   # System 14
+  # bgmsys_15:   # System 15
+  # bgmsys_16:   # System 16
+  # bgmsys_17:   # System 17
+  # bgmsys_18:   # System 18
+  # bgmsys_19:   # System 19
+  # bgmsys_20:   # System 20
+  # bgmsys_21:   # System 21
+  # bgmsys_22:   # System 22
+";
+                System.IO.File.WriteAllText(ConfigPath, defaultYaml);
+                Melon<Core>.Logger.Msg($"[Music] Created default config with all cues: {ConfigPath}");
 
                 // Apply default
                 var absPath = System.IO.Path.Combine(streamingAssets, "CustomBGM/battle-melody-2.hca");
