@@ -455,8 +455,10 @@ public static unsafe class NativeAutoBattlePatch
                 var resolvedActions = _ruleEngine.EvaluateForCharacter(i, battle);
                 if (resolvedActions == null || resolvedActions.Count == 0) continue;
 
-                // Submit each action in the matched rule
-                foreach (var action in resolvedActions)
+                // Submit only the FIRST action — multi-brave breaks the game's command system
+                // The game expects 1 command per character from autobattle
+                var firstAction = resolvedActions[0];
+                foreach (var action in new[] { firstAction })
                 {
                     switch (action.Type)
                     {
