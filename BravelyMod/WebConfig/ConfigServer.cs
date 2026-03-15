@@ -263,10 +263,10 @@ public static class ConfigServer
             </div>
 
             <div class=""card-grid"">
-                <a href=""/autobattle"" class=""card"">
+                <a href=""/autobattle/editor"" class=""card"">
                     <div class=""card-icon"">&#9876;</div>
                     <div class=""card-title"">AutoBattle Profiles</div>
-                    <div class=""card-desc"">Edit conditional autobattle rules with the DSL editor.<br/>
+                    <div class=""card-desc"">Visual rule editor for conditional autobattle.<br/>
                     Active: <strong>{WebUtility.HtmlEncode(engine.ActiveProfileName)}</strong></div>
                     <div class=""card-footer"">{assignmentHtml}</div>
                 </a>
@@ -340,8 +340,9 @@ public static class ConfigServer
         assignSb.Append("</table>");
 
         return WrapHtml("AutoBattle Config", "autobattle", $@"
-            <h2>AutoBattle Profiles</h2>
-            <p class=""subtitle"">Edit conditional autobattle rules using the DSL below. First matching rule wins (top to bottom).</p>
+            <h2>AutoBattle Profiles <span style=""font-size:0.55em;color:#666688;font-weight:normal"">(Advanced YAML Editor)</span></h2>
+            <p class=""subtitle"">Edit conditional autobattle rules using the DSL below. First matching rule wins (top to bottom).
+            <br/><a href=""/autobattle/editor"">Switch to Visual Editor</a></p>
 
             {msgBlock}
 
@@ -514,8 +515,9 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
         assignSb.Append("</table>");
 
         return WrapHtml("AutoBattle Config", "autobattle", $@"
-            <h2>AutoBattle Profiles</h2>
-            <p class=""subtitle"">Edit conditional autobattle rules using the DSL below. First matching rule wins (top to bottom).</p>
+            <h2>AutoBattle Profiles <span style=""font-size:0.55em;color:#666688;font-weight:normal"">(Advanced YAML Editor)</span></h2>
+            <p class=""subtitle"">Edit conditional autobattle rules using the DSL below. First matching rule wins (top to bottom).
+            <br/><a href=""/autobattle/editor"">Switch to Visual Editor</a></p>
 
             {messageHtml}
 
@@ -3518,7 +3520,8 @@ assignments:
                 <div class=""nav-brand"">BravelyMod</div>
                 <div class=""nav-links"">
                     {NavLink("/", "Dashboard", "")}
-                    {NavLink("/autobattle", "AutoBattle", "autobattle")}
+                    {NavLink("/autobattle/editor", "AutoBattle", "autobattle-editor")}
+                    {NavLink("/autobattle", "YAML Editor", "autobattle")}
                     {NavLink("/music", "Music", "music")}
                     {NavLink("/settings", "Settings", "settings")}
                     {NavLink("/status", "Status", "status")}
