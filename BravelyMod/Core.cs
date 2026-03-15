@@ -161,6 +161,9 @@ public class Core : MelonMod
         LoggerInstance.Msg($"  WalkSpeed: {(WalkSpeedModEnabled.Value ? $"x{WalkSpeedMultiplier.Value}" : "OFF")}");
         LoggerInstance.Msg($"  BattleBGM: {(CustomBattleMusicEnabled.Value ? "custom" : "OFF")}");
         LoggerInstance.Msg("Edit UserData/MelonPreferences.cfg to toggle features.");
+
+        // Start web config server for live editing
+        WebConfig.ConfigServer.Start();
     }
 
     public override void OnUpdate()

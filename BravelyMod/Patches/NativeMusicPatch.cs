@@ -112,6 +112,17 @@ public static unsafe class NativeMusicPatch
         }
     }
 
+    /// <summary>
+    /// Reload music overrides from disk. Called by the web config server after saving.
+    /// Clears existing overrides and re-reads the YAML config file.
+    /// </summary>
+    public static void ReloadConfig()
+    {
+        _overrides.Clear();
+        LoadConfig();
+        Melon<Core>.Logger.Msg($"[Music] Config reloaded: {_overrides.Count} overrides active");
+    }
+
     private static void LoadConfig()
     {
         var streamingAssets = UnityEngine.Application.streamingAssetsPath;

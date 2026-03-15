@@ -162,13 +162,10 @@ public static unsafe class NativeBPPatch
             patched += PatchByte(dllBase, RVA_SetBP_Floor, OLD_SetBP_Floor, NEW_SetBP_Floor,
                 "SetBP floor (-4→-9)") ? 1 : 0;
 
-            // IsEnableBrave limits
-            patched += PatchByte(dllBase, RVA_Brave_BPFloor, OLD_Brave_BPFloor, NEW_Brave_BPFloor,
-                "IsEnableBrave BP floor (-5→-10)") ? 1 : 0;
-            patched += PatchByte(dllBase, RVA_Brave_ActionCap, OLD_Brave_ActionCap, NEW_Brave_ActionCap,
-                "IsEnableBrave action cap (4→10)") ? 1 : 0;
+            // IsEnableBrave: keep vanilla action cap (4) and BP floor (-5)
+            // BP accumulates to 9 but actions per turn stays at 4
 
-            Melon<Core>.Logger.Msg($"[BP-Patch] Memory patches applied: {patched}/6");
+            Melon<Core>.Logger.Msg($"[BP-Patch] Memory patches applied: {patched}/4");
         }
         catch (System.Exception ex)
         {
