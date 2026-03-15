@@ -9,6 +9,7 @@ namespace BravelyMod.Patches;
 /// <summary>
 /// Native hook on BtlLayoutCtrl.ProcessAutoBattle.
 /// Replaces the simple record-playback with the conditional rule engine.
+/// Now supports multi-action rules (multiple commands per character per turn).
 /// Falls back to original behavior if rule evaluation fails.
 /// </summary>
 public static unsafe class NativeAutoBattlePatch
@@ -153,52 +154,82 @@ public static unsafe class NativeAutoBattlePatch
                 var player = battle.Players[i];
                 if (player.IsDead) continue;
 
-                var resolved = _ruleEngine.EvaluateForCharacter(i, battle);
-                if (resolved == null) continue;
+                var resolvedActions = _ruleEngine.EvaluateForCharacter(i, battle);
+                if (resolvedActions == null || resolvedActions.Count == 0) continue;
 
-                var action = resolved.Value;
-
-                if (action.Type == ActionType.Attack && _addAttackCommandPtr != 0)
+                // Submit each action in the matched rule
+                foreach (var action in resolvedActions)
                 {
-                    CallAddAttackCommand(instance, player.Index, action.TargetIndex, action.IsTargetEnemy);
-                    anyRuleApplied = true;
+                    if (action.Type == ActionType.Attack && _addAttackCommandPtr != 0)
+                    {
+                        CallAddAttackCommand(instance, player.Index, action.TargetIndex, action.IsTargetEnemy);
+                        anyRuleApplied = true;
 
-                    if (_logCount < MaxLogLines)
-                    {
-                        Melon<Core>.Logger.Msg(
-                            $"[AutoBattle] Player {player.Index} -> Attack target {action.TargetIndex} (enemy={action.IsTargetEnemy})");
-                        _logCount++;
-                    }
-                }
-                else if (action.Type == ActionType.Ability)
-                {
-                    // TODO: Implement ability command submission (needs AddAbilityCommand address)
-                    // For now, fall back to attack on the same target
-                    if (_addAttackCommandPtr != 0)
-                    {
-                        // Fallback: if we wanted Cure but can't send ability commands yet, just attack weakest
-                        int fallbackTarget = FindWeakestEnemyIndex(battle);
-                        if (fallbackTarget >= 0)
+                        if (_logCount < MaxLogLines)
                         {
-                            CallAddAttackCommand(instance, player.Index, fallbackTarget, true);
-                            anyRuleApplied = true;
-
-                            if (_logCount < MaxLogLines)
+                            Melon<Core>.Logger.Msg(
+                                $"[AutoBattle] Player {player.Index} -> Attack target {action.TargetIndex} (enemy={action.IsTargetEnemy})");
+                            _logCount++;
+                        }
+                    }
+                    else if (action.Type == ActionType.Ability)
+                    {
+                        // TODO: Implement ability command submission (needs AddAbilityCommand address)
+                        // For now, fall back to attack on the resolved target or weakest enemy
+                        if (_addAttackCommandPtr != 0)
+                        {
+                            int fallbackTarget = action.IsTargetEnemy ? action.TargetIndex : FindWeakestEnemyIndex(battle);
+                            if (fallbackTarget >= 0)
                             {
-                                Melon<Core>.Logger.Msg(
-                                    $"[AutoBattle] Player {player.Index} -> Ability fallback: Attack target {fallbackTarget}");
-                                _logCount++;
+                                CallAddAttackCommand(instance, player.Index, fallbackTarget, true);
+                                anyRuleApplied = true;
+
+                                if (_logCount < MaxLogLines)
+                                {
+                                    Melon<Core>.Logger.Msg(
+                                        $"[AutoBattle] Player {player.Index} -> Ability #{action.AbilityId} fallback: Attack target {fallbackTarget}");
+                                    _logCount++;
+                                }
                             }
                         }
                     }
-                }
-                else if (action.Type == ActionType.Guard)
-                {
-                    // TODO: Implement guard command
-                    if (_logCount < MaxLogLines)
+                    else if (action.Type == ActionType.Item)
                     {
-                        Melon<Core>.Logger.Msg($"[AutoBattle] Player {player.Index} -> Guard (not yet implemented, skipping)");
-                        _logCount++;
+                        // TODO: Implement item command submission
+                        if (_addAttackCommandPtr != 0)
+                        {
+                            int fallbackTarget = FindWeakestEnemyIndex(battle);
+                            if (fallbackTarget >= 0)
+                            {
+                                CallAddAttackCommand(instance, player.Index, fallbackTarget, true);
+                                anyRuleApplied = true;
+
+                                if (_logCount < MaxLogLines)
+                                {
+                                    Melon<Core>.Logger.Msg(
+                                        $"[AutoBattle] Player {player.Index} -> Item #{action.ItemId} not yet implemented, fallback: Attack");
+                                    _logCount++;
+                                }
+                            }
+                        }
+                    }
+                    else if (action.Type == ActionType.Guard)
+                    {
+                        // TODO: Implement guard command
+                        if (_logCount < MaxLogLines)
+                        {
+                            Melon<Core>.Logger.Msg($"[AutoBattle] Player {player.Index} -> Guard (not yet implemented, skipping)");
+                            _logCount++;
+                        }
+                    }
+                    else if (action.Type == ActionType.Default)
+                    {
+                        // Let the original behavior handle this character
+                        if (_logCount < MaxLogLines)
+                        {
+                            Melon<Core>.Logger.Msg($"[AutoBattle] Player {player.Index} -> Default (original behavior)");
+                            _logCount++;
+                        }
                     }
                 }
             }

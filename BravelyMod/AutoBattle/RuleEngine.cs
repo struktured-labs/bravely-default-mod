@@ -4,6 +4,10 @@ namespace BravelyMod.AutoBattle;
 /// Pure C# rule evaluation engine for conditional autobattle.
 /// No IL2CPP dependencies — operates on <see cref="CharacterSnapshot"/> and <see cref="BattleSnapshot"/>.
 /// Rules are evaluated top-to-bottom; first match wins.
+/// Each rule can produce multiple actions (multi-brave).
+///
+/// DSL format: "conditions → actions"
+///   e.g. "HP &lt; 30% &amp; Foes = 1 → Cure Self, Atk Strong x2"
 /// </summary>
 
 // ──────────────────────────────────────────────────────────────
@@ -41,6 +45,7 @@ public readonly struct BattleSnapshot
 {
     public readonly CharacterSnapshot[] Players;
     public readonly CharacterSnapshot[] Enemies;
+    public readonly int TurnNumber;
 
     public int AliveEnemyCount
     {
@@ -64,10 +69,11 @@ public readonly struct BattleSnapshot
         }
     }
 
-    public BattleSnapshot(CharacterSnapshot[] players, CharacterSnapshot[] enemies)
+    public BattleSnapshot(CharacterSnapshot[] players, CharacterSnapshot[] enemies, int turnNumber = 1)
     {
         Players = players;
         Enemies = enemies;
+        TurnNumber = turnNumber;
     }
 }
 
@@ -77,7 +83,7 @@ public readonly struct BattleSnapshot
 
 public enum CompareOp { Less, LessOrEqual, Equal, GreaterOrEqual, Greater, NotEqual }
 
-public enum ConditionType { Always, HpPercent, MpPercent, EnemyCount, AllyCount, BpValue }
+public enum ConditionType { Always, HpPercent, MpPercent, EnemyCount, AllyCount, BpValue, TurnNumber }
 
 public class Condition
 {
@@ -109,6 +115,7 @@ public class Condition
             ConditionType.EnemyCount => Compare(battle.AliveEnemyCount, Op, Value),
             ConditionType.AllyCount => Compare(battle.AlivePlayerCount, Op, Value),
             ConditionType.BpValue => Compare(self.Bp, Op, Value),
+            ConditionType.TurnNumber => Compare(battle.TurnNumber, Op, Value),
             _ => false,
         };
     }
@@ -125,7 +132,7 @@ public class Condition
     };
 
     /// <summary>
-    /// Compact string for command plate preview, e.g. "HP&lt;30%" or "1 Foe" or "" (Always).
+    /// Compact string for command plate preview, e.g. "HP&lt;30%" or "Foes=1" or "" (Always).
     /// </summary>
     public string ToShortString()
     {
@@ -145,9 +152,10 @@ public class Condition
             ConditionType.Always => "",
             ConditionType.HpPercent => $"HP{opStr}{Value:0}%",
             ConditionType.MpPercent => $"MP{opStr}{Value:0}%",
-            ConditionType.EnemyCount => $"{Value:0} Foe{(Value != 1 ? "s" : "")}",
-            ConditionType.AllyCount => $"{Value:0} Ally",
+            ConditionType.EnemyCount => $"Foes{opStr}{Value:0}",
+            ConditionType.AllyCount => $"Allies{opStr}{Value:0}",
             ConditionType.BpValue => $"BP{opStr}{Value:0}",
+            ConditionType.TurnNumber => $"Turn{opStr}{Value:0}",
             _ => "?"
         };
     }
@@ -180,8 +188,14 @@ public class BattleAction
 
     public static BattleAction AttackWeakest() => new(ActionType.Attack, TargetSelector.WeakestEnemy);
     public static BattleAction AttackStrongest() => new(ActionType.Attack, TargetSelector.StrongestEnemy);
+    public static BattleAction AttackRandom() => new(ActionType.Attack, TargetSelector.RandomEnemy);
     public static BattleAction AbilityOnSelf(int abilityId) => new(ActionType.Ability, TargetSelector.Self, abilityId);
+    public static BattleAction AbilityOnAlly(int abilityId) => new(ActionType.Ability, TargetSelector.WeakestAlly, abilityId);
+    public static BattleAction AbilityOnFoe(int abilityId) => new(ActionType.Ability, TargetSelector.WeakestEnemy, abilityId);
+    public static BattleAction ItemOnSelf(int itemId) => new(ActionType.Item, TargetSelector.Self, itemId: itemId);
+    public static BattleAction ItemOnAlly(int itemId) => new(ActionType.Item, TargetSelector.WeakestAlly, itemId: itemId);
     public static BattleAction GuardSelf() => new(ActionType.Guard, TargetSelector.Self);
+    public static BattleAction DefaultAction() => new(ActionType.Default, TargetSelector.WeakestEnemy);
 
     /// <summary>
     /// Compact action label for command plate preview, e.g. "Atk Weak", "Cure", "Guard".
@@ -215,22 +229,30 @@ public class BattleAction
 // ──────────────────────────────────────────────────────────────
 
 /// <summary>
-/// A single rule: all conditions must be true (AND) for the action to fire.
+/// A single rule: all conditions must be true (AND) for the actions to fire.
+/// A rule can have multiple actions (multi-brave / multi-action per turn).
 /// </summary>
 public class Rule
 {
-    public string Name { get; set; }
     public List<Condition> Conditions { get; set; } = new();
-    public BattleAction Action { get; set; }
+    public List<BattleAction> Actions { get; set; } = new();
+
+    /// <summary>
+    /// The original DSL string this rule was parsed from (for display / re-serialization).
+    /// </summary>
+    public string DslSource { get; set; }
 
     public Rule() { }
 
-    public Rule(string name, BattleAction action, params Condition[] conditions)
+    public Rule(List<BattleAction> actions, params Condition[] conditions)
     {
-        Name = name;
-        Action = action;
+        Actions = actions;
         Conditions = new List<Condition>(conditions);
     }
+
+    /// <summary>Convenience: single-action rule.</summary>
+    public Rule(BattleAction action, params Condition[] conditions)
+        : this(new List<BattleAction> { action }, conditions) { }
 
     public bool Evaluate(CharacterSnapshot self, BattleSnapshot battle)
     {
@@ -242,8 +264,8 @@ public class Rule
 
     /// <summary>
     /// Compact rule summary for command plate preview.
-    /// Format: "condition1,condition2->action" or "->action" for Always.
-    /// Examples: "HP&lt;30%->Abl#1 Self", "1 Foe->Atk Strong", "->Atk Weak"
+    /// Format: "condition &amp; condition → action, action x2"
+    /// Examples: "HP&lt;30% → Cure Self", "Foes=1 → Atk Strong x4", "→ Atk Weak x3"
     /// </summary>
     public string ToShortString()
     {
@@ -255,8 +277,36 @@ public class Rule
                 condParts.Add(s);
         }
 
-        string condStr = condParts.Count > 0 ? string.Join(",", condParts) : "";
-        string actionStr = Action?.ToShortString() ?? "?";
+        string condStr = condParts.Count > 0 ? string.Join(" & ", condParts) : "";
+
+        // Group consecutive identical actions with xN
+        var actionParts = new List<string>();
+        if (Actions.Count > 0)
+        {
+            string current = Actions[0].ToShortString();
+            int count = 1;
+            for (int i = 1; i < Actions.Count; i++)
+            {
+                string next = Actions[i].ToShortString();
+                if (next == current)
+                {
+                    count++;
+                }
+                else
+                {
+                    actionParts.Add(count > 1 ? $"{current} x{count}" : current);
+                    current = next;
+                    count = 1;
+                }
+            }
+            actionParts.Add(count > 1 ? $"{current} x{count}" : current);
+        }
+        else
+        {
+            actionParts.Add("?");
+        }
+
+        string actionStr = string.Join(", ", actionParts);
         return $"{condStr}\u2192{actionStr}";
     }
 }
@@ -274,13 +324,13 @@ public class RuleProfile
     public RuleProfile(string name) { Name = name; }
 
     /// <summary>
-    /// Evaluate rules for a character. Returns the action of the first matching rule, or null.
+    /// Evaluate rules for a character. Returns the action list of the first matching rule, or null.
     /// </summary>
-    public BattleAction Evaluate(CharacterSnapshot self, BattleSnapshot battle)
+    public List<BattleAction> Evaluate(CharacterSnapshot self, BattleSnapshot battle)
     {
         foreach (var rule in Rules)
             if (rule.Evaluate(self, battle))
-                return rule.Action;
+                return rule.Actions;
         return null;
     }
 }
@@ -378,10 +428,10 @@ public class RuleEngine
     }
 
     /// <summary>
-    /// Evaluate rules for a given player character and resolve the action to a concrete target.
+    /// Evaluate rules for a given player character and resolve all actions to concrete targets.
     /// Returns null if no rule matched (caller should fall back to original behavior).
     /// </summary>
-    public ResolvedAction? EvaluateForCharacter(int charaIndex, BattleSnapshot battle)
+    public List<ResolvedAction> EvaluateForCharacter(int charaIndex, BattleSnapshot battle)
     {
         if (charaIndex < 0 || charaIndex >= battle.Players.Length)
             return null;
@@ -393,10 +443,18 @@ public class RuleEngine
                       ?? DefaultProfile;
         if (profile == null) return null;
 
-        var action = profile.Evaluate(self, battle);
-        if (action == null) return null;
+        var actions = profile.Evaluate(self, battle);
+        if (actions == null || actions.Count == 0) return null;
 
-        return ResolveTarget(action, self, battle);
+        var resolved = new List<ResolvedAction>();
+        foreach (var action in actions)
+        {
+            var r = ResolveTarget(action, self, battle);
+            if (r != null)
+                resolved.Add(r.Value);
+        }
+
+        return resolved.Count > 0 ? resolved : null;
     }
 
     private static ResolvedAction? ResolveTarget(BattleAction action, CharacterSnapshot self, BattleSnapshot battle)
@@ -468,24 +526,12 @@ public class RuleEngine
         return bestIdx;
     }
 
-    // ── MVP hardcoded profile ───────────────────────────────
-    // 1. HP < 30% -> Cure on self (ability ID 0x01 = White Magic: Cure)
-    // 2. enemy count == 1 -> attack strongest
-    // 3. always -> attack weakest
+    // ── Default profile (hardcoded fallback) ────────────────────
 
     public static RuleProfile CreateDefaultProfile()
     {
         var profile = new RuleProfile("Default");
         profile.Rules.Add(new Rule(
-            "Low HP -> Cure self",
-            BattleAction.AbilityOnSelf(0x01),
-            Condition.HpBelow(30)));
-        profile.Rules.Add(new Rule(
-            "Single enemy -> Attack strongest",
-            BattleAction.AttackStrongest(),
-            Condition.EnemyCountEquals(1)));
-        profile.Rules.Add(new Rule(
-            "Fallback -> Attack weakest",
             BattleAction.AttackWeakest(),
             Condition.Always()));
         return profile;

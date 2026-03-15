@@ -10,6 +10,10 @@ namespace BravelyMod.Patches;
 /// Instead of opening the rename dialog, it cycles through autobattle profiles and shows the
 /// profile name via SetDialogText.
 ///
+/// Also hooks AutoWindowAddCommandPlate to show multi-action rule previews on command plates.
+/// Each plate now shows one action from the matched rule's action list, cycling through actions
+/// for each successive plate call on the same character.
+///
 /// Sub-menu indices (from Ghidra decompilation):
 ///   0 = Use          -> phase 0x17 (AutoBattlePhase)
 ///   1 = Copy         -> phase 0x18 (AutoCopyMenuPhase via CopyOpen)
@@ -56,10 +60,11 @@ public static unsafe class NativeTacticsMenuPatch
     private const int MaxLogLines = 30;
 
     /// <summary>
-    /// Tracks which rule index to show next per character during command plate population.
+    /// Tracks which action index to show next per character during command plate population.
+    /// For multi-action rules, each plate call advances to the next action.
     /// Reset when character index decreases (new autobattle preview cycle).
     /// </summary>
-    private static readonly int[] _ruleIndexPerCharacter = new int[4];
+    private static readonly int[] _actionIndexPerCharacter = new int[4];
     private static int _lastCharacterIndex = -1;
 
     public static void Apply()
@@ -150,14 +155,6 @@ public static unsafe class NativeTacticsMenuPatch
     {
         try
         {
-            // BtlGUIAutoWindow_TypeInfo is accessible via Il2Cpp interop
-            var typeInfoField = typeof(Il2Cpp.BtlGUIAutoWindow).GetField(
-                "Il2CppClassPointerStore_NativeClassPtr",
-                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
-
-            // Alternative: read from the Il2CppType directly
-            // m_Phase is a public static int at static field offset 0x28
-            // Access via Il2CppInterop: Il2Cpp.BtlGUIAutoWindow.m_Phase
             return Il2Cpp.BtlGUIAutoWindow.m_Phase;
         }
         catch
@@ -176,14 +173,6 @@ public static unsafe class NativeTacticsMenuPatch
             Il2Cpp.BtlGUIAutoWindow.m_Phase = phase;
         }
         catch { }
-    }
-
-    /// <summary>
-    /// Check if the current phase is AutoSubMenuPhase (22 = 0x16).
-    /// </summary>
-    private static bool IsInSubMenuPhase()
-    {
-        return ReadPhase() == 22; // AutoSubMenuPhase
     }
 
     /// <summary>
@@ -214,10 +203,6 @@ public static unsafe class NativeTacticsMenuPatch
                 // Revert the phase back to AutoSubMenuPhase so the rename flow doesn't proceed
                 WritePhase(22);
 
-                // Cancel any InputFieldOpen coroutine that may have been started
-                // (The coroutine checks Editting flag and phase, so reverting phase should
-                //  prevent it from doing anything meaningful on next tick)
-
                 // Cycle to next profile
                 var engine = NativeAutoBattlePatch.RuleEngine;
                 string newProfile = engine.CycleProfile();
@@ -246,8 +231,6 @@ public static unsafe class NativeTacticsMenuPatch
 
     /// <summary>
     /// Show the profile name by calling the game's DialogOpen + SetDialogText.
-    /// We call DialogOpen to make the dialog pane visible, then SetDialogText
-    /// with the profile name and selVisible=false (no Yes/No buttons).
     /// </summary>
     private static void ShowProfileName(nint instance, string profileName)
     {
@@ -256,8 +239,6 @@ public static unsafe class NativeTacticsMenuPatch
         try
         {
             // Call DialogOpen first to make the dialog visible
-            // DialogOpen is at instance method, we can call it via Il2Cpp interop or native ptr.
-            // For simplicity, resolve and call DialogOpen via the Il2Cpp type.
             var dialogOpenField = typeof(Il2Cpp.BtlGUIAutoWindow).GetField(
                 "NativeMethodInfoPtr_DialogOpen_Public_Void_0",
                 System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
@@ -298,7 +279,7 @@ public static unsafe class NativeTacticsMenuPatch
     }
 
     // ──────────────────────────────────────────────────────────────
-    // AutoWindowAddCommandPlate hook — rule preview in command plates
+    // AutoWindowAddCommandPlate hook — multi-action rule preview
     // ──────────────────────────────────────────────────────────────
 
     private static void HookAutoWindowAddCommandPlate()
@@ -337,12 +318,12 @@ public static unsafe class NativeTacticsMenuPatch
     }
 
     /// <summary>
-    /// Hook for AutoWindowAddCommandPlate. Replaces the commandName string with a
-    /// compact rule summary from the character's autobattle profile.
+    /// Hook for AutoWindowAddCommandPlate. Shows individual actions from the first matching
+    /// rule's action list on successive command plates for each character.
     ///
-    /// The game calls this once per command slot per character during autobattle preview.
-    /// We track which rule to show per character using _ruleIndexPerCharacter, advancing
-    /// each time a plate is added for the same character.
+    /// For a rule like "→ Atk Strong x4", each of the 4 plates shows "Atk Strong".
+    /// For "HP &lt; 50% → Cure Ally, Atk Strong x2", plates show "Cure Ally", "Atk Strong", "Atk Strong".
+    /// If the rule has fewer actions than plates, the rule's short summary is shown.
     /// </summary>
     private static void AutoWindowAddCommandPlate_Hook(nint instance, int characterIndex, nint commandName, nint iconName, byte isAbility, nint methodInfo)
     {
@@ -356,37 +337,42 @@ public static unsafe class NativeTacticsMenuPatch
                 // Detect new preview cycle: when characterIndex goes back to 0 or lower than last seen
                 if (characterIndex <= _lastCharacterIndex && characterIndex == 0)
                 {
-                    for (int i = 0; i < _ruleIndexPerCharacter.Length; i++)
-                        _ruleIndexPerCharacter[i] = 0;
-                }
-
-                // Track per-character rule index for sequential plate calls
-                if (characterIndex != _lastCharacterIndex)
-                {
-                    // New character — don't reset, the counter persists within a cycle
+                    for (int i = 0; i < _actionIndexPerCharacter.Length; i++)
+                        _actionIndexPerCharacter[i] = 0;
                 }
                 _lastCharacterIndex = characterIndex;
 
-                int safeIdx = characterIndex >= 0 && characterIndex < _ruleIndexPerCharacter.Length
+                int safeIdx = characterIndex >= 0 && characterIndex < _actionIndexPerCharacter.Length
                     ? characterIndex : 0;
 
-                int ruleIdx = _ruleIndexPerCharacter[safeIdx];
-                if (ruleIdx < profile.Rules.Count)
+                int actionIdx = _actionIndexPerCharacter[safeIdx];
+
+                // Find the first rule (the one that would match in a generic preview context).
+                // For preview, we show the first rule's actions since we don't have live battle state.
+                var firstRule = profile.Rules[0];
+                string summary;
+
+                if (actionIdx < firstRule.Actions.Count)
                 {
-                    var rule = profile.Rules[ruleIdx];
-                    string summary = rule.ToShortString();
+                    // Show individual action label for this plate
+                    var action = firstRule.Actions[actionIdx];
+                    summary = action.ToShortString();
+                    _actionIndexPerCharacter[safeIdx] = actionIdx + 1;
+                }
+                else
+                {
+                    // More plates than actions: show the full rule summary
+                    summary = firstRule.ToShortString();
+                    _actionIndexPerCharacter[safeIdx] = actionIdx + 1;
+                }
 
-                    // Advance the rule index for next plate call on this character
-                    _ruleIndexPerCharacter[safeIdx] = ruleIdx + 1;
+                // Create IL2CPP string and replace commandName
+                commandName = Il2CppInterop.Runtime.IL2CPP.ManagedStringToIl2Cpp(summary);
 
-                    // Create IL2CPP string and replace commandName
-                    commandName = Il2CppInterop.Runtime.IL2CPP.ManagedStringToIl2Cpp(summary);
-
-                    if (_logCount < MaxLogLines)
-                    {
-                        Melon<Core>.Logger.Msg($"[TacticsMenu] Plate char={characterIndex} rule={ruleIdx}: {summary}");
-                        _logCount++;
-                    }
+                if (_logCount < MaxLogLines)
+                {
+                    Melon<Core>.Logger.Msg($"[TacticsMenu] Plate char={characterIndex} action={actionIdx}: {summary}");
+                    _logCount++;
                 }
             }
         }
