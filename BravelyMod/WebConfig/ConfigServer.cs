@@ -151,6 +151,18 @@ public static class ConfigServer
                     responseBody = HandleMusicReload();
                     break;
 
+                case "/settings" when method == "GET":
+                    responseBody = HandleSettingsGet();
+                    break;
+
+                case "/settings" when method == "POST":
+                    responseBody = HandleSettingsPost(request);
+                    break;
+
+                case "/settings/reset" when method == "POST":
+                    responseBody = HandleSettingsReset();
+                    break;
+
                 case "/status":
                     responseBody = HandleStatus();
                     break;
@@ -225,8 +237,14 @@ public static class ConfigServer
                     <div class=""card-desc"">Replace BGM cues with custom HCA audio files.</div>
                     <div class=""card-footer"">Config: BravelyMod_Music.yaml</div>
                 </a>
-                <a href=""/status"" class=""card"">
+                <a href=""/settings"" class=""card"">
                     <div class=""card-icon"">&#9881;</div>
+                    <div class=""card-title"">Settings</div>
+                    <div class=""card-desc"">Edit all mod parameters live — multipliers, toggles, speeds, and more.</div>
+                    <div class=""card-footer"">Changes apply immediately</div>
+                </a>
+                <a href=""/status"" class=""card"">
+                    <div class=""card-icon"">&#128202;</div>
                     <div class=""card-title"">Mod Status</div>
                     <div class=""card-desc"">View all hooks, multipliers, and current game state.</div>
                     <div class=""card-footer"">v0.2.0</div>
@@ -572,9 +590,9 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
 
         string msgBlock = messageHtml ?? "";
 
-        // List available HCA files
+        // List available HCA files (clickable to copy path)
         var hcaHtml = new StringBuilder();
-        hcaHtml.Append("<div class=\"section-label\">Available HCA Files in CustomBGM/</div>");
+        hcaHtml.Append("<div class=\"section-label\">Available HCA Files in CustomBGM/ <span class=\"dimmed\">(click to copy path)</span></div>");
         try
         {
             string bgmDir = CustomBgmDir;
@@ -587,25 +605,44 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
 
                 if (files.Length > 0)
                 {
-                    hcaHtml.Append("<div class=\"file-list\">");
+                    hcaHtml.Append("<div class=\"file-list\" id=\"fileList\">");
                     foreach (var f in files)
-                        hcaHtml.Append($"<span class=\"file-tag\">CustomBGM/{WebUtility.HtmlEncode(f)}</span> ");
+                    {
+                        var path = $"CustomBGM/{WebUtility.HtmlEncode(f)}";
+                        hcaHtml.Append($"<span class=\"file-tag file-tag-click\" onclick=\"copyPath('{path}')\" title=\"Click to copy path\">{path}</span> ");
+                    }
                     hcaHtml.Append("</div>");
                 }
                 else
                 {
-                    hcaHtml.Append("<p class=\"dimmed\">No .hca files found in CustomBGM/ folder.</p>");
+                    hcaHtml.Append("<p class=\"dimmed\" id=\"fileList\">No .hca files found in CustomBGM/ folder.</p>");
                 }
             }
             else
             {
-                hcaHtml.Append("<p class=\"dimmed\">CustomBGM/ folder not found at StreamingAssets path.</p>");
+                hcaHtml.Append("<p class=\"dimmed\" id=\"fileList\">CustomBGM/ folder not found at StreamingAssets path.</p>");
             }
         }
         catch (Exception ex)
         {
-            hcaHtml.Append($"<p class=\"dimmed\">Error scanning folder: {WebUtility.HtmlEncode(ex.Message)}</p>");
+            hcaHtml.Append($"<p class=\"dimmed\" id=\"fileList\">Error scanning folder: {WebUtility.HtmlEncode(ex.Message)}</p>");
         }
+
+        // Upload HCA widget
+        hcaHtml.Append(@"
+            <div class=""upload-section"">
+                <div class=""section-label"">Upload HCA File</div>
+                <p class=""cs-note"">Convert MP3/WAV to HCA first using <code>scripts/convert_music.sh</code>, then upload the .hca file here.</p>
+                <div class=""upload-area"" id=""uploadArea"">
+                    <input type=""file"" id=""hcaFileInput"" accept="".hca"" style=""display:none"" onchange=""uploadFile(this)""/>
+                    <div class=""upload-prompt"" onclick=""document.getElementById('hcaFileInput').click()"">
+                        <span class=""upload-icon"">&#8682;</span>
+                        <span>Click to select .hca file or drag &amp; drop</span>
+                    </div>
+                    <div class=""upload-status"" id=""uploadStatus"" style=""display:none""></div>
+                </div>
+            </div>
+        ");
 
         // Build cue name reference
         var cueRefHtml = @"
@@ -677,6 +714,120 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
             function doReloadMusic() {{
                 fetch('/music/reload', {{method:'POST'}}).then(()=>location.reload());
             }}
+
+            function copyPath(path) {{
+                navigator.clipboard.writeText(path).then(function() {{
+                    showToast('Copied: ' + path);
+                }}).catch(function() {{
+                    // Fallback: insert at cursor in the YAML editor
+                    var ta = document.querySelector('textarea[name=yaml]');
+                    if (ta) {{
+                        var start = ta.selectionStart;
+                        ta.value = ta.value.substring(0, start) + path + ta.value.substring(ta.selectionEnd);
+                        ta.selectionStart = ta.selectionEnd = start + path.length;
+                        ta.focus();
+                        showToast('Inserted: ' + path);
+                    }}
+                }});
+            }}
+
+            function showToast(msg) {{
+                var t = document.getElementById('toast');
+                if (!t) {{
+                    t = document.createElement('div');
+                    t.id = 'toast';
+                    t.style.cssText = 'position:fixed;bottom:2em;right:2em;background:#2ecc71;color:#0f0f1a;padding:10px 20px;border-radius:6px;font-weight:bold;z-index:1000;transition:opacity 0.3s;';
+                    document.body.appendChild(t);
+                }}
+                t.textContent = msg;
+                t.style.opacity = '1';
+                clearTimeout(t._timer);
+                t._timer = setTimeout(function() {{ t.style.opacity = '0'; }}, 2000);
+            }}
+
+            function uploadFile(input) {{
+                var file = input.files[0];
+                if (!file) return;
+                if (!file.name.endsWith('.hca')) {{
+                    showUploadStatus('Only .hca files are accepted. Use convert_music.sh to convert first.', 'error');
+                    return;
+                }}
+                showUploadStatus('Uploading ' + file.name + '...', 'info');
+
+                var fd = new FormData();
+                fd.append('file', file);
+
+                fetch('/music/upload', {{ method: 'POST', body: fd }})
+                    .then(function(r) {{ return r.json(); }})
+                    .then(function(data) {{
+                        if (data.error) {{
+                            showUploadStatus('Error: ' + data.error, 'error');
+                        }} else {{
+                            showUploadStatus('Uploaded: ' + data.path + ' (' + formatSize(data.size) + ')', 'success');
+                            refreshFileList();
+                        }}
+                    }})
+                    .catch(function(err) {{
+                        showUploadStatus('Upload failed: ' + err, 'error');
+                    }});
+                input.value = ''; // reset so same file can be re-uploaded
+            }}
+
+            function showUploadStatus(msg, type) {{
+                var el = document.getElementById('uploadStatus');
+                el.style.display = 'block';
+                el.textContent = msg;
+                el.className = 'upload-status upload-status-' + type;
+            }}
+
+            function formatSize(bytes) {{
+                if (bytes < 1024) return bytes + ' B';
+                if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+                return (bytes/(1024*1024)).toFixed(1) + ' MB';
+            }}
+
+            function refreshFileList() {{
+                fetch('/music/files')
+                    .then(function(r) {{ return r.json(); }})
+                    .then(function(data) {{
+                        var container = document.getElementById('fileList');
+                        if (!container) return;
+                        if (data.files && data.files.length > 0) {{
+                            var html = '';
+                            data.files.forEach(function(f) {{
+                                html += '<span class=""file-tag file-tag-click"" onclick=""copyPath(\'' + f.path + '\')"" title=""Click to copy path"">' + f.path + '</span> ';
+                            }});
+                            container.innerHTML = html;
+                            container.className = 'file-list';
+                        }} else {{
+                            container.textContent = 'No .hca files found.';
+                            container.className = 'dimmed';
+                        }}
+                    }});
+            }}
+
+            // Drag and drop support
+            (function() {{
+                var area = document.getElementById('uploadArea');
+                if (!area) return;
+                area.addEventListener('dragover', function(e) {{
+                    e.preventDefault();
+                    area.classList.add('upload-area-hover');
+                }});
+                area.addEventListener('dragleave', function(e) {{
+                    area.classList.remove('upload-area-hover');
+                }});
+                area.addEventListener('drop', function(e) {{
+                    e.preventDefault();
+                    area.classList.remove('upload-area-hover');
+                    var files = e.dataTransfer.files;
+                    if (files.length > 0) {{
+                        var input = document.getElementById('hcaFileInput');
+                        input.files = files;
+                        uploadFile(input);
+                    }}
+                }});
+            }})();
             </script>
         ");
     }
@@ -736,6 +887,497 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
             Melon<Core>.Logger.Warning($"[WebConfig] Music reload error: {ex.Message}");
         }
         return HandleMusicGet(MsgBox("Reloaded music config from disk.", "success"));
+    }
+
+    /// <summary>
+    /// GET /music/files - Returns a JSON array of HCA files available in CustomBGM/.
+    /// </summary>
+    private static string HandleMusicFiles()
+    {
+        var sb = new StringBuilder();
+        sb.Append("{\"files\":[");
+        try
+        {
+            string bgmDir = CustomBgmDir;
+            if (!string.IsNullOrEmpty(bgmDir) && Directory.Exists(bgmDir))
+            {
+                var files = Directory.GetFiles(bgmDir, "*.hca")
+                    .Select(f => Path.GetFileName(f))
+                    .OrderBy(f => f)
+                    .ToArray();
+
+                for (int i = 0; i < files.Length; i++)
+                {
+                    if (i > 0) sb.Append(",");
+                    var name = files[i];
+                    var fullPath = Path.Combine(bgmDir, name);
+                    var size = new FileInfo(fullPath).Length;
+                    sb.Append($"{{\"name\":\"{EscapeJson(name)}\",\"path\":\"CustomBGM/{EscapeJson(name)}\",\"size\":{size}}}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Melon<Core>.Logger.Warning($"[WebConfig] Music files error: {ex.Message}");
+        }
+        sb.Append("]}");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// POST /music/upload - Accepts a multipart HCA file upload and saves to CustomBGM/.
+    /// Returns JSON with the relative path on success.
+    /// </summary>
+    private static string HandleMusicUpload(HttpListenerRequest request)
+    {
+        try
+        {
+            string bgmDir = CustomBgmDir;
+            if (string.IsNullOrEmpty(bgmDir))
+                return "{\"error\":\"CustomBGM directory not available (game not running?).\"}";
+
+            Directory.CreateDirectory(bgmDir);
+
+            // Parse multipart form data to extract the uploaded file
+            string contentTypeHeader = request.ContentType;
+            if (contentTypeHeader == null || !contentTypeHeader.Contains("multipart/form-data"))
+                return "{\"error\":\"Expected multipart/form-data content type.\"}";
+
+            // Extract boundary from content type
+            string boundary = null;
+            foreach (var part in contentTypeHeader.Split(';'))
+            {
+                var trimmed = part.Trim();
+                if (trimmed.StartsWith("boundary=", StringComparison.OrdinalIgnoreCase))
+                {
+                    boundary = trimmed.Substring("boundary=".Length).Trim('"');
+                    break;
+                }
+            }
+
+            if (boundary == null)
+                return "{\"error\":\"Could not parse multipart boundary.\"}";
+
+            // Read the entire body
+            byte[] bodyBytes;
+            using (var ms = new MemoryStream())
+            {
+                request.InputStream.CopyTo(ms);
+                bodyBytes = ms.ToArray();
+            }
+
+            // Simple multipart parser: find the file part
+            var boundaryBytes = Encoding.UTF8.GetBytes("--" + boundary);
+            string fileName = null;
+            byte[] fileData = null;
+
+            int pos = 0;
+            while (pos < bodyBytes.Length)
+            {
+                // Find next boundary
+                int boundaryStart = FindBytes(bodyBytes, boundaryBytes, pos);
+                if (boundaryStart < 0) break;
+
+                int headerStart = boundaryStart + boundaryBytes.Length;
+                // Skip CRLF after boundary
+                if (headerStart + 1 < bodyBytes.Length && bodyBytes[headerStart] == '\r' && bodyBytes[headerStart + 1] == '\n')
+                    headerStart += 2;
+
+                // Check for closing boundary (--boundary--)
+                if (headerStart < bodyBytes.Length && bodyBytes[headerStart] == '-' && headerStart + 1 < bodyBytes.Length && bodyBytes[headerStart + 1] == '-')
+                    break;
+
+                // Find end of headers (double CRLF)
+                int headerEnd = FindBytes(bodyBytes, new byte[] { 0x0D, 0x0A, 0x0D, 0x0A }, headerStart);
+                if (headerEnd < 0) break;
+
+                string headers = Encoding.UTF8.GetString(bodyBytes, headerStart, headerEnd - headerStart);
+                int dataStart = headerEnd + 4; // skip double CRLF
+
+                // Find next boundary to determine data end
+                int nextBoundary = FindBytes(bodyBytes, boundaryBytes, dataStart);
+                if (nextBoundary < 0) break;
+
+                // Data ends before CRLF before next boundary
+                int dataEnd = nextBoundary - 2; // skip CRLF before boundary
+                if (dataEnd < dataStart) dataEnd = dataStart;
+
+                // Check if this part has a filename
+                if (headers.Contains("filename="))
+                {
+                    // Extract filename from Content-Disposition
+                    foreach (var line in headers.Split(new[] { "\r\n" }, StringSplitOptions.None))
+                    {
+                        if (line.StartsWith("Content-Disposition:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            int fnIdx = line.IndexOf("filename=\"", StringComparison.OrdinalIgnoreCase);
+                            if (fnIdx >= 0)
+                            {
+                                fnIdx += "filename=\"".Length;
+                                int fnEnd = line.IndexOf('"', fnIdx);
+                                if (fnEnd > fnIdx)
+                                    fileName = line.Substring(fnIdx, fnEnd - fnIdx);
+                            }
+                        }
+                    }
+
+                    fileData = new byte[dataEnd - dataStart];
+                    Array.Copy(bodyBytes, dataStart, fileData, 0, fileData.Length);
+                    break; // take first file
+                }
+
+                pos = nextBoundary + boundaryBytes.Length;
+            }
+
+            if (fileName == null || fileData == null || fileData.Length == 0)
+                return "{\"error\":\"No file found in upload.\"}";
+
+            // Sanitize filename
+            fileName = Path.GetFileName(fileName); // strip directory components
+            if (string.IsNullOrWhiteSpace(fileName))
+                return "{\"error\":\"Invalid filename.\"}";
+
+            // Ensure .hca extension
+            if (!fileName.EndsWith(".hca", StringComparison.OrdinalIgnoreCase))
+                return "{\"error\":\"Only .hca files are accepted. Use the convert_music.sh script to convert MP3/WAV to HCA first.\"}";
+
+            // Validate it looks like an HCA file (magic bytes "HCA\0")
+            if (fileData.Length < 4 || fileData[0] != 0x48 || fileData[1] != 0x43 || fileData[2] != 0x41)
+                return "{\"error\":\"File does not appear to be a valid HCA file (bad magic bytes).\"}";
+
+            // Write to CustomBGM/
+            string destPath = Path.Combine(bgmDir, fileName);
+            File.WriteAllBytes(destPath, fileData);
+
+            string relativePath = $"CustomBGM/{fileName}";
+            Melon<Core>.Logger.Msg($"[WebConfig] Uploaded music file: {relativePath} ({fileData.Length} bytes)");
+
+            return $"{{\"success\":true,\"path\":\"{EscapeJson(relativePath)}\",\"name\":\"{EscapeJson(fileName)}\",\"size\":{fileData.Length}}}";
+        }
+        catch (Exception ex)
+        {
+            Melon<Core>.Logger.Warning($"[WebConfig] Music upload error: {ex.Message}");
+            return $"{{\"error\":\"{EscapeJson(ex.Message)}\"}}";
+        }
+    }
+
+    /// <summary>Find a byte sequence within a larger byte array, starting at offset.</summary>
+    private static int FindBytes(byte[] haystack, byte[] needle, int offset)
+    {
+        for (int i = offset; i <= haystack.Length - needle.Length; i++)
+        {
+            bool match = true;
+            for (int j = 0; j < needle.Length; j++)
+            {
+                if (haystack[i + j] != needle[j]) { match = false; break; }
+            }
+            if (match) return i;
+        }
+        return -1;
+    }
+
+    // ── Settings ────────────────────────────────────────────────
+
+    private static string HandleSettingsGet(string messageHtml = null)
+    {
+        string msgBlock = messageHtml ?? "";
+
+        // Helper to build a checkbox input
+        string Checkbox(string name, bool value, string label, string hint = null)
+        {
+            string chk = value ? "checked" : "";
+            string hintHtml = hint != null ? $"<span class=\"setting-hint\">{WebUtility.HtmlEncode(hint)}</span>" : "";
+            return $@"<label class=""setting-toggle"">
+                <input type=""checkbox"" name=""{name}"" value=""true"" {chk}/>
+                <span class=""toggle-label"">{WebUtility.HtmlEncode(label)}</span>{hintHtml}
+            </label>";
+        }
+
+        // Helper to build a number input for float
+        string FloatInput(string name, float value, string label, string hint = null)
+        {
+            string hintHtml = hint != null ? $"<span class=\"setting-hint\">{WebUtility.HtmlEncode(hint)}</span>" : "";
+            return $@"<div class=""setting-field"">
+                <label for=""{name}"">{WebUtility.HtmlEncode(label)}</label>{hintHtml}
+                <input type=""number"" name=""{name}"" id=""{name}"" value=""{value}"" step=""any"" class=""num-input""/>
+            </div>";
+        }
+
+        // Helper to build a number input for int
+        string IntInput(string name, int value, string label, string hint = null)
+        {
+            string hintHtml = hint != null ? $"<span class=\"setting-hint\">{WebUtility.HtmlEncode(hint)}</span>" : "";
+            return $@"<div class=""setting-field"">
+                <label for=""{name}"">{WebUtility.HtmlEncode(label)}</label>{hintHtml}
+                <input type=""number"" name=""{name}"" id=""{name}"" value=""{value}"" step=""1"" class=""num-input""/>
+            </div>";
+        }
+
+        return WrapHtml("Settings", "settings", $@"
+            <h2>Mod Settings</h2>
+            <p class=""subtitle"">Edit all mod parameters live. Most changes take effect immediately.</p>
+
+            {msgBlock}
+
+            <form method=""POST"" action=""/settings"" id=""settingsForm"">
+                <div class=""settings-grid"">
+
+                    <!-- EXP / JP / Gold -->
+                    <div class=""settings-group"">
+                        <div class=""settings-group-title"">EXP / JP / Gold</div>
+                        {Checkbox("ExpBoostEnabled", Core.ExpBoostEnabled.Value, "Enable EXP/JP/Gold Multiplier")}
+                        {FloatInput("ExpMultiplier", Core.ExpMultiplier.Value, "EXP Multiplier", "Default: 10")}
+                        {FloatInput("JexpMultiplier", Core.JexpMultiplier.Value, "JP Multiplier", "Default: 1000")}
+                        {FloatInput("GoldMultiplier", Core.GoldMultiplier.Value, "Gold Multiplier", "Default: 100")}
+                    </div>
+
+                    <!-- Damage Cap -->
+                    <div class=""settings-group"">
+                        <div class=""settings-group-title"">Damage Cap</div>
+                        {Checkbox("DamageCapEnabled", Core.DamageCapEnabled.Value, "Enable Damage Cap Override")}
+                        {IntInput("DamageCapOverride", Core.DamageCapOverride.Value, "Damage Cap", "Default: 999999")}
+                    </div>
+
+                    <!-- BP -->
+                    <div class=""settings-group"">
+                        <div class=""settings-group-title"">Brave Points (BP)</div>
+                        <div class=""restart-badge"">Requires restart</div>
+                        {Checkbox("BpModEnabled", Core.BpModEnabled.Value, "Enable BP Modifications")}
+                        {IntInput("BpLimitOverride", Core.BpLimitOverride.Value, "BP Limit", "Default: 9")}
+                        {IntInput("BpPerTurn", Core.BpPerTurn.Value, "BP Per Turn", "Default: 2 (vanilla: 1)")}
+                    </div>
+
+                    <!-- Battle Speed -->
+                    <div class=""settings-group"">
+                        <div class=""settings-group-title"">Battle Speed</div>
+                        {Checkbox("SpeedModEnabled", Core.SpeedModEnabled.Value, "Enable Battle Speed Mod")}
+                        {FloatInput("BattleSpeedMultiplier", Core.BattleSpeedMultiplier.Value, "Speed Multiplier", "Default: 4 (on top of in-game speed)")}
+                    </div>
+
+                    <!-- Colony -->
+                    <div class=""settings-group"">
+                        <div class=""settings-group-title"">Colony</div>
+                        {Checkbox("ColonyModEnabled", Core.ColonyModEnabled.Value, "Enable Colony Speed Mod")}
+                        {FloatInput("ColonySpeedMultiplier", Core.ColonySpeedMultiplier.Value, "Colony Speed Multiplier", "Default: 10")}
+                    </div>
+
+                    <!-- Scene Skip -->
+                    <div class=""settings-group"">
+                        <div class=""settings-group-title"">Scene Skip</div>
+                        {Checkbox("ForceSceneSkip", Core.ForceSceneSkip.Value, "Force Scene Skip Always Available")}
+                    </div>
+
+                    <!-- Support Cost -->
+                    <div class=""settings-group"">
+                        <div class=""settings-group-title"">Support Ability Cost</div>
+                        <div class=""restart-badge"">Requires restart</div>
+                        {Checkbox("SupportCostModEnabled", Core.SupportCostModEnabled.Value, "Enable Support Cost Override")}
+                        {IntInput("SupportCostOverride", Core.SupportCostOverride.Value, "Equip Cost", "Default: 1 (vanilla: 1-4)")}
+                    </div>
+
+                    <!-- Walk Speed -->
+                    <div class=""settings-group"">
+                        <div class=""settings-group-title"">Walk Speed</div>
+                        {Checkbox("WalkSpeedModEnabled", Core.WalkSpeedModEnabled.Value, "Enable Speed Walk")}
+                        {FloatInput("WalkSpeedMultiplier", Core.WalkSpeedMultiplier.Value, "Walk Speed Multiplier", "Default: 2.5 (on top of dash)")}
+                    </div>
+
+                    <!-- Custom Music -->
+                    <div class=""settings-group"">
+                        <div class=""settings-group-title"">Custom Music</div>
+                        <div class=""restart-badge"">Requires restart</div>
+                        {Checkbox("CustomBattleMusicEnabled", Core.CustomBattleMusicEnabled.Value, "Replace Battle BGM with Custom Music")}
+                    </div>
+
+                </div>
+
+                <div class=""btn-row settings-actions"">
+                    <button type=""submit"" class=""btn-primary"">Save Settings</button>
+                    <button type=""button"" class=""btn-secondary"" onclick=""doReset()"">Reset to Defaults</button>
+                </div>
+            </form>
+
+            <script>
+            function doReset() {{
+                if (confirm('Reset all settings to their default values?')) {{
+                    fetch('/settings/reset', {{method:'POST'}}).then(()=>location.reload());
+                }}
+            }}
+            </script>
+        ");
+    }
+
+    private static string HandleSettingsPost(HttpListenerRequest request)
+    {
+        try
+        {
+            string body;
+            using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+            {
+                body = reader.ReadToEnd();
+            }
+
+            var changes = new List<string>();
+            var warnings = new List<string>();
+
+            // Helper to read a bool (checkbox: present=true, absent=false)
+            bool ReadBool(string name)
+            {
+                string val = ExtractFormValue(body, name);
+                return val != null && val == "true";
+            }
+
+            // Helper to read a float
+            float ReadFloat(string name, float fallback)
+            {
+                string val = ExtractFormValue(body, name);
+                if (val != null && float.TryParse(val, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out float result))
+                    return result;
+                return fallback;
+            }
+
+            // Helper to read an int
+            int ReadInt(string name, int fallback)
+            {
+                string val = ExtractFormValue(body, name);
+                if (val != null && int.TryParse(val, out int result))
+                    return result;
+                return fallback;
+            }
+
+            // Track changes for user feedback
+            void SetBool(MelonPreferences_Entry<bool> entry, bool newVal, string label, bool requiresRestart = false)
+            {
+                if (entry.Value != newVal)
+                {
+                    entry.Value = newVal;
+                    string note = requiresRestart ? " (requires restart)" : "";
+                    changes.Add($"{label}: {(newVal ? "ON" : "OFF")}{note}");
+                }
+            }
+
+            void SetFloat(MelonPreferences_Entry<float> entry, float newVal, string label, bool requiresRestart = false)
+            {
+                if (Math.Abs(entry.Value - newVal) > 0.0001f)
+                {
+                    entry.Value = newVal;
+                    string note = requiresRestart ? " (requires restart)" : "";
+                    changes.Add($"{label}: {newVal}{note}");
+                }
+            }
+
+            void SetInt(MelonPreferences_Entry<int> entry, int newVal, string label, bool requiresRestart = false)
+            {
+                if (entry.Value != newVal)
+                {
+                    entry.Value = newVal;
+                    string note = requiresRestart ? " (requires restart)" : "";
+                    changes.Add($"{label}: {newVal}{note}");
+                }
+            }
+
+            // Apply all settings
+            SetBool(Core.ExpBoostEnabled, ReadBool("ExpBoostEnabled"), "EXP Boost");
+            SetFloat(Core.ExpMultiplier, ReadFloat("ExpMultiplier", Core.ExpMultiplier.Value), "EXP Multiplier");
+            SetFloat(Core.JexpMultiplier, ReadFloat("JexpMultiplier", Core.JexpMultiplier.Value), "JP Multiplier");
+            SetFloat(Core.GoldMultiplier, ReadFloat("GoldMultiplier", Core.GoldMultiplier.Value), "Gold Multiplier");
+
+            SetBool(Core.DamageCapEnabled, ReadBool("DamageCapEnabled"), "Damage Cap");
+            SetInt(Core.DamageCapOverride, ReadInt("DamageCapOverride", Core.DamageCapOverride.Value), "Damage Cap Value");
+
+            SetBool(Core.BpModEnabled, ReadBool("BpModEnabled"), "BP Mod", requiresRestart: true);
+            SetInt(Core.BpLimitOverride, ReadInt("BpLimitOverride", Core.BpLimitOverride.Value), "BP Limit", requiresRestart: true);
+            SetInt(Core.BpPerTurn, ReadInt("BpPerTurn", Core.BpPerTurn.Value), "BP Per Turn", requiresRestart: true);
+
+            SetBool(Core.SpeedModEnabled, ReadBool("SpeedModEnabled"), "Battle Speed");
+            SetFloat(Core.BattleSpeedMultiplier, ReadFloat("BattleSpeedMultiplier", Core.BattleSpeedMultiplier.Value), "Battle Speed Multiplier");
+
+            SetBool(Core.ColonyModEnabled, ReadBool("ColonyModEnabled"), "Colony Speed");
+            SetFloat(Core.ColonySpeedMultiplier, ReadFloat("ColonySpeedMultiplier", Core.ColonySpeedMultiplier.Value), "Colony Speed Multiplier");
+
+            SetBool(Core.ForceSceneSkip, ReadBool("ForceSceneSkip"), "Scene Skip");
+
+            SetBool(Core.SupportCostModEnabled, ReadBool("SupportCostModEnabled"), "Support Cost Mod", requiresRestart: true);
+            SetInt(Core.SupportCostOverride, ReadInt("SupportCostOverride", Core.SupportCostOverride.Value), "Support Cost", requiresRestart: true);
+
+            SetBool(Core.WalkSpeedModEnabled, ReadBool("WalkSpeedModEnabled"), "Walk Speed");
+            SetFloat(Core.WalkSpeedMultiplier, ReadFloat("WalkSpeedMultiplier", Core.WalkSpeedMultiplier.Value), "Walk Speed Multiplier");
+
+            SetBool(Core.CustomBattleMusicEnabled, ReadBool("CustomBattleMusicEnabled"), "Custom Battle Music", requiresRestart: true);
+
+            // Save to disk
+            Core.Config.SaveToFile(false);
+
+            if (changes.Count == 0)
+            {
+                return HandleSettingsGet(MsgBox("No changes detected.", "warning"));
+            }
+
+            bool hasRestartWarning = changes.Any(c => c.Contains("(requires restart)"));
+
+            var sb = new StringBuilder();
+            sb.Append(MsgBoxOpen("success"));
+            sb.Append($"<strong>Saved {changes.Count} change(s)!</strong><ul>");
+            foreach (var c in changes)
+                sb.Append($"<li>{WebUtility.HtmlEncode(c)}</li>");
+            sb.Append("</ul>");
+            if (hasRestartWarning)
+                sb.Append("<em>Settings marked \"requires restart\" are saved but won't fully apply until the game is restarted.</em>");
+            sb.Append(MsgBoxClose());
+
+            Melon<Core>.Logger.Msg($"[WebConfig] Settings updated: {string.Join(", ", changes)}");
+
+            return HandleSettingsGet(sb.ToString());
+        }
+        catch (Exception ex)
+        {
+            return HandleSettingsGet(MsgBox($"Error saving settings: {ex.Message}", "error"));
+        }
+    }
+
+    private static string HandleSettingsReset()
+    {
+        try
+        {
+            Core.ExpBoostEnabled.Value = true;
+            Core.ExpMultiplier.Value = 10.0f;
+            Core.JexpMultiplier.Value = 1000.0f;
+            Core.GoldMultiplier.Value = 100.0f;
+
+            Core.DamageCapEnabled.Value = true;
+            Core.DamageCapOverride.Value = 999999;
+
+            Core.BpModEnabled.Value = true;
+            Core.BpLimitOverride.Value = 9;
+            Core.BpPerTurn.Value = 2;
+
+            Core.SpeedModEnabled.Value = true;
+            Core.BattleSpeedMultiplier.Value = 4.0f;
+
+            Core.ColonyModEnabled.Value = true;
+            Core.ColonySpeedMultiplier.Value = 10.0f;
+
+            Core.ForceSceneSkip.Value = true;
+
+            Core.SupportCostModEnabled.Value = true;
+            Core.SupportCostOverride.Value = 1;
+
+            Core.WalkSpeedModEnabled.Value = true;
+            Core.WalkSpeedMultiplier.Value = 2.5f;
+
+            Core.CustomBattleMusicEnabled.Value = true;
+
+            Core.Config.SaveToFile(false);
+
+            Melon<Core>.Logger.Msg("[WebConfig] Settings reset to defaults.");
+
+            return HandleSettingsGet(MsgBox("All settings reset to defaults.", "success"));
+        }
+        catch (Exception ex)
+        {
+            return HandleSettingsGet(MsgBox($"Error resetting settings: {ex.Message}", "error"));
+        }
     }
 
     // ── Status ──────────────────────────────────────────────────
@@ -995,6 +1637,7 @@ assignments:
                     {NavLink("/", "Dashboard", "")}
                     {NavLink("/autobattle", "AutoBattle", "autobattle")}
                     {NavLink("/music", "Music", "music")}
+                    {NavLink("/settings", "Settings", "settings")}
                     {NavLink("/status", "Status", "status")}
                 </div>
             </nav>";
@@ -1258,6 +1901,94 @@ assignments:
             padding: 0.8em;
             font-size: 0.85em;
             line-height: 1.7;
+        }}
+
+        /* ── Settings page ── */
+        .settings-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 1.2em;
+            margin-bottom: 1.5em;
+        }}
+        .settings-group {{
+            background: #16162a;
+            border: 1px solid #2a2a44;
+            border-radius: 8px;
+            padding: 1.2em 1.4em;
+        }}
+        .settings-group-title {{
+            font-size: 1em;
+            font-weight: 700;
+            color: #e4a040;
+            margin-bottom: 0.8em;
+            padding-bottom: 0.4em;
+            border-bottom: 1px solid #2a2a44;
+        }}
+        .setting-toggle {{
+            display: flex;
+            align-items: center;
+            gap: 0.6em;
+            margin-bottom: 0.7em;
+            cursor: pointer;
+            flex-wrap: wrap;
+        }}
+        .setting-toggle input[type=""checkbox""] {{
+            width: 18px;
+            height: 18px;
+            accent-color: #e4a040;
+            cursor: pointer;
+            flex-shrink: 0;
+        }}
+        .toggle-label {{
+            color: #d0d0d8;
+            font-size: 0.93em;
+        }}
+        .setting-hint {{
+            font-size: 0.8em;
+            color: #666688;
+            margin-left: 0.3em;
+        }}
+        .setting-field {{
+            margin-bottom: 0.7em;
+        }}
+        .setting-field label {{
+            display: block;
+            font-size: 0.9em;
+            color: #9999bb;
+            margin-bottom: 0.3em;
+        }}
+        .num-input {{
+            width: 100%;
+            max-width: 200px;
+            background: #12122a;
+            color: #d0d0d8;
+            border: 1px solid #333355;
+            padding: 8px 10px;
+            border-radius: 5px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 14px;
+        }}
+        .num-input:focus {{
+            outline: none;
+            border-color: #e4a040;
+        }}
+        .restart-badge {{
+            display: inline-block;
+            background: #2a2200;
+            border: 1px solid #e4a040;
+            color: #e4a040;
+            font-size: 0.72em;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 0.2em 0.6em;
+            border-radius: 3px;
+            margin-bottom: 0.8em;
+        }}
+        .settings-actions {{
+            margin-top: 0.5em;
+            padding-top: 1em;
+            border-top: 1px solid #2a2a44;
         }}
     </style>
 </head>
