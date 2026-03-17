@@ -407,7 +407,11 @@ overrides:
     private static string _currentHcaPath;
     private static Il2CppCriWare.CriAtomExPlayback _currentPlayback;
 
-    /// <summary>Check if custom music stopped and restart it (poor man's loop)</summary>
+    /// <summary>
+    /// Safety-net loop check. With native Loop(true) this should rarely fire,
+    /// but handles edge cases where the player reaches PlayEnd despite the loop flag
+    /// (e.g., HCA files without embedded loop points on some CRI versions).
+    /// </summary>
     public static void CheckLoop()
     {
         try
@@ -421,8 +425,10 @@ overrides:
                 // CriAtomExPlayer.Status: Stop=0, Prep=1, Playing=2, PlayEnd=3, Error=4
                 if ((int)status >= 3) // PlayEnd or Error
                 {
+                    Melon<Core>.Logger.Msg("[Music] CheckLoop fallback: track ended despite native loop, restarting");
                     _customPlayer.SetFile(null, _currentHcaPath);
                     _customPlayer.SetVolume(0.55f);
+                    _customPlayer.Loop(true);
                     _currentPlayback = _customPlayer.Start();
                 }
             }
@@ -452,9 +458,11 @@ overrides:
 
             _customPlayer.SetFile(null, hcaPath);
             _customPlayer.SetVolume(0.55f);
+            _customPlayer.Loop(true);
             var playback = _customPlayer.Start();
+            _currentPlayback = playback;
             _customPlaying = true;
-            Melon<Core>.Logger.Msg($"[Music] Custom playback started (id={playback.id})");
+            Melon<Core>.Logger.Msg($"[Music] Custom playback started with native loop (id={playback.id})");
             return 0;
         }
         catch (Exception ex)
