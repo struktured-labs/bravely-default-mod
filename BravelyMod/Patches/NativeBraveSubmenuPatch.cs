@@ -327,6 +327,13 @@ public static unsafe class NativeBraveSubmenuPatch
                     _addPredictedBp(charaCtrl, btlChara, -1, _addPredictedBp_mi);
             }
 
+            // 4. Play brave sound effect
+            try
+            {
+                Il2Cpp.SoundManager.PlaySE("BT_SPE_BRAVE", false, false, 0);
+            }
+            catch { }
+
             // NOTE: We intentionally skip the following calls from _pushCmdBrave:
             // - ForceWindowAnimationToEnd — causes submenu to close
             // - AddMessage — triggers UI transition animation
