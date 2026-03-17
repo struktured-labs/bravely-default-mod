@@ -95,7 +95,8 @@ public class Core : MelonMod
         LoggerInstance.Msg("Applying native hooks...");
         if (ExpBoostEnabled.Value)
         {
-            Patches.NativeExpPatch.Apply();
+            // EXP/JP/Gold all multiplied in CreateResultData — no separate ReviseAddEXP hooks
+            // Patches.NativeExpPatch.Apply();  // DISABLED: causes double multiplication
             Patches.NativeResultDisplayPatch.Apply();
         }
         if (SupportCostModEnabled.Value)

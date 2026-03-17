@@ -85,7 +85,8 @@ public static unsafe class NativeResultDisplayPatch
             nint resultData = *(nint*)(instance + 0x58);
             if (resultData == 0) return;
 
-            // Multiply at the source: gil=0x10, exp=0x14, jobexp=0x18
+            // Multiply ALL rewards at the source — display AND actual gains come from here
+            // ReviseAddEXP/ReviseAddJEXP hooks are DISABLED to prevent double multiplication
             var gilPtr = (int*)(resultData + 0x10);
             var expPtr = (int*)(resultData + 0x14);
             var jexpPtr = (int*)(resultData + 0x18);
