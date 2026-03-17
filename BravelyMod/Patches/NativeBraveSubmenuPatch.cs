@@ -133,8 +133,56 @@ public static unsafe class NativeBraveSubmenuPatch
     {
         try
         {
-            // Check brave button BEFORE original Update consumes input
-            if (_pressBR != null || _pressBL != null)
+            // Read AP count BEFORE vanilla Update
+            int apBefore = -1;
+            nint btlLC = *(nint*)(instance + OFF_BTL_LAYOUT_CTRL);
+            if (btlLC != 0)
+            {
+                int cIdx = *(int*)(btlLC + OFF_CHARA_INDEX);
+                nint cMgr = *(nint*)(btlLC + 0x218);
+                if (cMgr != 0)
+                {
+                    nint cArr = *(nint*)(cMgr + 0x20);
+                    if (cArr != 0 && cIdx >= 0 && cIdx < *(int*)(cArr + 0x18))
+                    {
+                        nint ch = *(nint*)(cArr + 0x20 + cIdx * 8);
+                        if (ch != 0)
+                        {
+                            nint ap = *(nint*)(ch + 0x148);
+                            if (ap != 0) apBefore = *(int*)(ap + 0x10);
+                        }
+                    }
+                }
+            }
+
+            // Call original Update — vanilla brave may fire here
+            _updateHook.Trampoline(instance, time, methodInfo);
+
+            // Read AP count AFTER vanilla Update
+            int apAfter = -1;
+            if (btlLC != 0)
+            {
+                int cIdx = *(int*)(btlLC + OFF_CHARA_INDEX);
+                nint cMgr = *(nint*)(btlLC + 0x218);
+                if (cMgr != 0)
+                {
+                    nint cArr = *(nint*)(cMgr + 0x20);
+                    if (cArr != 0 && cIdx >= 0 && cIdx < *(int*)(cArr + 0x18))
+                    {
+                        nint ch = *(nint*)(cArr + 0x20 + cIdx * 8);
+                        if (ch != 0)
+                        {
+                            nint ap = *(nint*)(ch + 0x148);
+                            if (ap != 0) apAfter = *(int*)(ap + 0x10);
+                        }
+                    }
+                }
+            }
+
+            bool vanillaBraved = apBefore >= 0 && apAfter > apBefore;
+
+            // Only fire our brave if vanilla DIDN'T handle it
+            if (!vanillaBraved && (_pressBR != null || _pressBL != null))
             {
                 nint mainWndProc = *(nint*)(instance + OFF_MAIN_WND_PROC);
                 if (mainWndProc != 0)
@@ -155,9 +203,11 @@ public static unsafe class NativeBraveSubmenuPatch
                     }
                 }
             }
-
-            // Call original Update
-            _updateHook.Trampoline(instance, time, methodInfo);
+            else if (vanillaBraved)
+            {
+                // Reset debounce since vanilla consumed the press
+                _braveWasDown = false;
+            }
         }
         catch
         {
@@ -223,7 +273,18 @@ public static unsafe class NativeBraveSubmenuPatch
                         if (_addPredictedBp != null && charaCtrl != 0)
                             _addPredictedBp(charaCtrl, btlChara, -1, _addPredictedBp_mi);
 
-                        // Play sound
+                        // Play brave sound via BtlSoundManager (at BtlLayoutCtrl+0x40)
+                        try
+                        {
+                            nint btlSoundMgr = *(nint*)(btlLayoutCtrl + 0x40);
+                            if (btlSoundMgr != 0)
+                            {
+                                var soundMgr = new Il2Cpp.BtlSoundManager(btlSoundMgr);
+                                soundMgr.PlaySE("BT_SPE_BRAVE", false, 0);
+                            }
+                        }
+                        catch { }
+                        // Fallback static
                         try { Il2Cpp.SoundManager.PlaySE("BT_SPE_BRAVE", false, false, 0); } catch { }
 
                         _logCount++;
