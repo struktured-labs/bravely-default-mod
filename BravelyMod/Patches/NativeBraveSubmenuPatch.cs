@@ -105,14 +105,49 @@ public static unsafe class NativeBraveSubmenuPatch
             // Actually, easier: just read the MainWndProc and call _updateShortcutKeys
             // every frame during submenu. The function itself checks if Brave button is pressed.
 
+            // Read m_Phase — it's a static field on BtlTopMenuLayout
+            // Access via TypeInfo: BtlTopMenuLayout_TypeInfo+0xB8 -> +0x28
+            // But we don't have TypeInfo easily. Instead, check if SubWndProc is active.
+            // SubWndProc is at instance+0x28 — if non-null and the submenu is open, we're in Phase 3
+            nint subWndProc = *(nint*)(instance + 0x28);
+            if (subWndProc == 0) return; // not in submenu
+
             // Get MainWndProc at instance+0x20
             nint mainWndProc = *(nint*)(instance + 0x20);
             if (mainWndProc == 0) return;
 
-            // Call _updateShortcutKeys on MainWndProc
-            // This checks for Brave button press and calls _pushCmdBrave if needed
+            // Check if Brave button is pressed (Pad.BR = 0x100 or Pad.BL = 0x200)
+            // Read from PadSampler — but simpler: just call _updateShortcutKeys
+            // and then force the phase back to SubMenuPhase (3)
+
+            // Read phase before
+            // m_Phase is static — try reading from the TypeInfo static fields
+            var typeInfo = typeof(Il2Cpp.BtlTopMenuLayout).TypeHandle.Value;
+            // Can't easily get static fields this way in IL2CPP...
+
+            // Alternative: just call _updateShortcutKeys and accept the phase change,
+            // then write phase back to 3
+            // Phase is stored at BtlTopMenuLayout static offset +0x28 in the static field area
+
+            // Read m_Phase (static field at TypeInfo+0xB8 -> +0x28)
+            nint typeInfoPtr = *(nint*)(*(nint*)instance); // instance->klass
+            nint staticFields = *(nint*)(typeInfoPtr + 0xB8);
+            if (staticFields == 0) return;
+            int phaseBefore = *(int*)(staticFields + 0x28);
+
+            // Only act during SubMenuPhase (3)
+            if (phaseBefore != 3) return;
+
+            // Call _updateShortcutKeys — may call _pushCmdBrave and change phase
             var fn = Marshal.GetDelegateForFunctionPointer<d_UpdateShortcutKeys>(_shortcutKeysPtr);
             fn(mainWndProc, _shortcutKeysMethodInfo);
+
+            // Restore phase to 3 (SubMenuPhase) so submenu stays open
+            int phaseAfter = *(int*)(staticFields + 0x28);
+            if (phaseAfter != phaseBefore)
+            {
+                *(int*)(staticFields + 0x28) = 3; // force back to submenu
+            }
         }
         catch { }
     }

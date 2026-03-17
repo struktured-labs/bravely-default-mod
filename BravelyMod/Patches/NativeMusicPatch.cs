@@ -36,8 +36,15 @@ public static unsafe class NativeMusicPatch
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void d_StopBGM(nint instance, int fadeFrame, nint methodInfo);
 
+    // void SoundInstance.PlayBGM(this, string _pName, int _turn, MethodInfo*)
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void d_SoundInstancePlayBGM(nint instance, nint pName, int turn, nint methodInfo);
+
     private static NativeHook<d_PlayBGM> _playBGMHook;
     private static d_PlayBGM _pinnedDelegate;
+
+    private static NativeHook<d_SoundInstancePlayBGM> _soundInstanceHook;
+    private static d_SoundInstancePlayBGM _pinnedSoundInstance;
 
     private static NativeHook<d_StopBGM> _stopBGMHook;
     private static d_StopBGM _pinnedStopDelegate;
@@ -75,6 +82,27 @@ public static unsafe class NativeMusicPatch
             _playBGMHook = new NativeHook<d_PlayBGM>(nativePtr, Marshal.GetFunctionPointerForDelegate(_pinnedDelegate));
             _playBGMHook.Attach();
             Melon<Core>.Logger.Msg("[Music] PlayBGM hook attached!");
+
+            // Also hook SoundInstance.PlayBGM for overworld/town/dungeon music
+            try
+            {
+                var siField = typeof(Il2Cpp.SoundInstance).GetField(
+                    "NativeMethodInfoPtr_PlayBGM_Public_Void_String_Int32_0",
+                    System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+                if (siField != null)
+                {
+                    var siMi = (nint)siField.GetValue(null);
+                    if (siMi != 0)
+                    {
+                        var siNative = *(nint*)siMi;
+                        _pinnedSoundInstance = SoundInstancePlayBGM_Hook;
+                        _soundInstanceHook = new NativeHook<d_SoundInstancePlayBGM>(siNative, Marshal.GetFunctionPointerForDelegate(_pinnedSoundInstance));
+                        _soundInstanceHook.Attach();
+                        Melon<Core>.Logger.Msg($"[Music] SoundInstance.PlayBGM hook @ 0x{siNative:X}");
+                    }
+                }
+            }
+            catch { }
 
             // Also hook StopBGM to stop custom player when battle ends
             var stopField = typeof(Il2Cpp.BtlSoundManager).GetField(
@@ -287,6 +315,34 @@ overrides:
         }
     }
 
+    private static void SoundInstancePlayBGM_Hook(nint instance, nint pName, int turn, nint methodInfo)
+    {
+        try
+        {
+            string name = pName != 0 ? Il2CppInterop.Runtime.IL2CPP.Il2CppStringToManaged(pName) : null;
+
+            _logCount++;
+            if (_logCount <= 15)
+                Melon<Core>.Logger.Msg($"[Music] SoundInstance.PlayBGM: '{name}' turn={turn}");
+
+            if (name != null && _overrides.TryGetValue(name, out var hcaPath))
+            {
+                Melon<Core>.Logger.Msg($"[Music] Intercepting (SoundInstance) {name} -> custom HCA");
+                StopCustomPlayer();
+                PlayCustomHCA(hcaPath);
+                // Don't call original — skip default music
+                return;
+            }
+
+            StopCustomPlayer();
+            _soundInstanceHook.Trampoline(instance, pName, turn, methodInfo);
+        }
+        catch
+        {
+            try { _soundInstanceHook.Trampoline(instance, pName, turn, methodInfo); } catch { }
+        }
+    }
+
     private static string _currentHcaPath;
     private static Il2CppCriWare.CriAtomExPlayback _currentPlayback;
 
@@ -302,7 +358,7 @@ overrides:
                 if ((int)status >= 3) // PlayEnd or Error
                 {
                     _customPlayer.SetFile(null, _currentHcaPath);
-                    _customPlayer.SetVolume(0.7f);
+                    _customPlayer.SetVolume(0.55f);
                     _currentPlayback = _customPlayer.Start();
                 }
             }
@@ -320,7 +376,7 @@ overrides:
             if (_customPlayer == null || !_customPlayer.isAvailable) return 0;
 
             _customPlayer.SetFile(null, hcaPath);
-            _customPlayer.SetVolume(0.7f);
+            _customPlayer.SetVolume(0.55f);
             var playback = _customPlayer.Start();
             _customPlaying = true;
             Melon<Core>.Logger.Msg($"[Music] Custom playback started (id={playback.id})");
