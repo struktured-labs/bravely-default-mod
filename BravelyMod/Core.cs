@@ -79,7 +79,7 @@ public class Core : MelonMod
         BattleSpeedMultiplier = Config.CreateEntry("BattleSpeedMultiplier", 4.0f, "Battle Speed Multiplier (applied on top of in-game speed)");
 
         ColonyModEnabled = Config.CreateEntry("ColonyModEnabled", true, "Enable colony speed mod");
-        ColonySpeedMultiplier = Config.CreateEntry("ColonySpeedMultiplier", 1000.0f, "Colony Speed Multiplier");
+        ColonySpeedMultiplier = Config.CreateEntry("ColonySpeedMultiplier", 10.0f, "Colony Speed Multiplier");
 
         ForceSceneSkip = Config.CreateEntry("ForceSceneSkip", true, "Force scene skip always available");
 
