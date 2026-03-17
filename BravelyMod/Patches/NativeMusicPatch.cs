@@ -12,7 +12,9 @@ using CriPlayer = Il2CppCriWare.CriAtomExPlayer;
 namespace BravelyMod.Patches;
 
 /// <summary>
-/// Hooks BtlSoundManager.PlayBGM to replace BGM cues with custom HCA files.
+/// Hooks BGM playback to replace BGM cues with custom HCA files.
+/// Hooks SoundInterface.PlayBGM (universal funnel for ALL BGM: overworld, town, dungeon, battle)
+/// and BtlSoundManager.PlayBGM (battle-specific, calls SoundInterface under the hood).
 /// Config: UserData/BravelyMod_Music.yaml
 /// </summary>
 public static unsafe class NativeMusicPatch
@@ -36,18 +38,27 @@ public static unsafe class NativeMusicPatch
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void d_StopBGM(nint instance, int fadeFrame, nint methodInfo);
 
-    // void SoundInstance.PlayBGM(this, string _pName, int _turn, MethodInfo*)
+    // void SoundInterface.StopBGM(this, string filename, int fadeFrame, MethodInfo*)
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    private delegate void d_SoundInstancePlayBGM(nint instance, nint pName, int turn, nint methodInfo);
+    private delegate void d_SoundInterfaceStopBGM(nint instance, nint pFilename, int fadeFrame, nint methodInfo);
+
+    // SoundInstance SoundInterface.PlayBGM(this, string filename, bool loopFlag, int fadeFrame, float offsetMS, MethodInfo*)
+    // This is the universal funnel: CruiseGame.PlayBGM, BgmEntry.Unit.Play, BGM_SE_Pause_PlayBGM,
+    // and BtlSoundManager.PlayBGM all call SoundInterface.PlayBGM internally.
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate nint d_SoundInterfacePlayBGM(nint instance, nint pFilename, byte loopFlag, int fadeFrame, float offsetMS, nint methodInfo);
 
     private static NativeHook<d_PlayBGM> _playBGMHook;
     private static d_PlayBGM _pinnedDelegate;
 
-    private static NativeHook<d_SoundInstancePlayBGM> _soundInstanceHook;
-    private static d_SoundInstancePlayBGM _pinnedSoundInstance;
+    private static NativeHook<d_SoundInterfacePlayBGM> _soundInterfaceHook;
+    private static d_SoundInterfacePlayBGM _pinnedSoundInterface;
 
     private static NativeHook<d_StopBGM> _stopBGMHook;
     private static d_StopBGM _pinnedStopDelegate;
+
+    private static NativeHook<d_SoundInterfaceStopBGM> _siStopBGMHook;
+    private static d_SoundInterfaceStopBGM _pinnedSiStopDelegate;
 
     private static CriPlayer _customPlayer;
     private static bool _customPlaying;
@@ -83,11 +94,12 @@ public static unsafe class NativeMusicPatch
             _playBGMHook.Attach();
             Melon<Core>.Logger.Msg("[Music] PlayBGM hook attached!");
 
-            // Also hook SoundInstance.PlayBGM for overworld/town/dungeon music
+            // Hook SoundInterface.PlayBGM - the universal funnel for ALL BGM playback
+            // (overworld, town, dungeon, battle all flow through here)
             try
             {
-                var siField = typeof(Il2Cpp.SoundInstance).GetField(
-                    "NativeMethodInfoPtr_PlayBGM_Public_Void_String_Int32_0",
+                var siField = typeof(Il2Cpp.SoundInterface).GetField(
+                    "NativeMethodInfoPtr_PlayBGM_Public_SoundInstance_String_Boolean_Int32_Single_0",
                     System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
                 if (siField != null)
                 {
@@ -95,16 +107,23 @@ public static unsafe class NativeMusicPatch
                     if (siMi != 0)
                     {
                         var siNative = *(nint*)siMi;
-                        _pinnedSoundInstance = SoundInstancePlayBGM_Hook;
-                        _soundInstanceHook = new NativeHook<d_SoundInstancePlayBGM>(siNative, Marshal.GetFunctionPointerForDelegate(_pinnedSoundInstance));
-                        _soundInstanceHook.Attach();
-                        Melon<Core>.Logger.Msg($"[Music] SoundInstance.PlayBGM hook @ 0x{siNative:X}");
+                        _pinnedSoundInterface = SoundInterfacePlayBGM_Hook;
+                        _soundInterfaceHook = new NativeHook<d_SoundInterfacePlayBGM>(siNative, Marshal.GetFunctionPointerForDelegate(_pinnedSoundInterface));
+                        _soundInterfaceHook.Attach();
+                        Melon<Core>.Logger.Msg($"[Music] SoundInterface.PlayBGM hook @ 0x{siNative:X}");
                     }
                 }
+                else
+                {
+                    Melon<Core>.Logger.Warning("[Music] SoundInterface.PlayBGM field not found!");
+                }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Melon<Core>.Logger.Warning($"[Music] SoundInterface hook failed: {ex.Message}");
+            }
 
-            // Also hook StopBGM to stop custom player when battle ends
+            // Hook BtlSoundManager.StopBGM to stop custom player when battle ends
             var stopField = typeof(Il2Cpp.BtlSoundManager).GetField(
                 "NativeMethodInfoPtr_StopBGM_Public_Void_Int32_0",
                 System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
@@ -117,8 +136,32 @@ public static unsafe class NativeMusicPatch
                     _pinnedStopDelegate = StopBGM_Hook;
                     _stopBGMHook = new NativeHook<d_StopBGM>(stopNative, Marshal.GetFunctionPointerForDelegate(_pinnedStopDelegate));
                     _stopBGMHook.Attach();
-                    Melon<Core>.Logger.Msg("[Music] StopBGM hook attached!");
+                    Melon<Core>.Logger.Msg("[Music] BtlSoundManager.StopBGM hook attached!");
                 }
+            }
+
+            // Hook SoundInterface.StopBGM to stop custom player on overworld BGM transitions
+            try
+            {
+                var siStopField = typeof(Il2Cpp.SoundInterface).GetField(
+                    "NativeMethodInfoPtr_StopBGM_Public_Void_String_Int32_0",
+                    System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+                if (siStopField != null)
+                {
+                    var siStopMi = (nint)siStopField.GetValue(null);
+                    if (siStopMi != 0)
+                    {
+                        var siStopNative = *(nint*)siStopMi;
+                        _pinnedSiStopDelegate = SoundInterfaceStopBGM_Hook;
+                        _siStopBGMHook = new NativeHook<d_SoundInterfaceStopBGM>(siStopNative, Marshal.GetFunctionPointerForDelegate(_pinnedSiStopDelegate));
+                        _siStopBGMHook.Attach();
+                        Melon<Core>.Logger.Msg($"[Music] SoundInterface.StopBGM hook @ 0x{siStopNative:X}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Melon<Core>.Logger.Warning($"[Music] SoundInterface.StopBGM hook failed: {ex.Message}");
             }
         }
         catch (Exception ex)
@@ -315,31 +358,33 @@ overrides:
         }
     }
 
-    private static void SoundInstancePlayBGM_Hook(nint instance, nint pName, int turn, nint methodInfo)
+    private static nint SoundInterfacePlayBGM_Hook(nint instance, nint pFilename, byte loopFlag, int fadeFrame, float offsetMS, nint methodInfo)
     {
         try
         {
-            string name = pName != 0 ? Il2CppInterop.Runtime.IL2CPP.Il2CppStringToManaged(pName) : null;
+            string filename = pFilename != 0 ? IL2CPP.Il2CppStringToManaged(pFilename) : null;
 
             _logCount++;
-            if (_logCount <= 15)
-                Melon<Core>.Logger.Msg($"[Music] SoundInstance.PlayBGM: '{name}' turn={turn}");
+            if (_logCount <= 20)
+                Melon<Core>.Logger.Msg($"[Music] SoundInterface.PlayBGM: '{filename}' loop={loopFlag} fade={fadeFrame} offset={offsetMS}");
 
-            if (name != null && _overrides.TryGetValue(name, out var hcaPath))
+            if (filename != null && _overrides.TryGetValue(filename, out var hcaPath))
             {
-                Melon<Core>.Logger.Msg($"[Music] Intercepting (SoundInstance) {name} -> custom HCA");
+                Melon<Core>.Logger.Msg($"[Music] Intercepting (SoundInterface) {filename} -> custom HCA");
                 StopCustomPlayer();
                 PlayCustomHCA(hcaPath);
-                // Don't call original — skip default music
-                return;
+                // Skip original playback — return null SoundInstance
+                return 0;
             }
 
             StopCustomPlayer();
-            _soundInstanceHook.Trampoline(instance, pName, turn, methodInfo);
+            return _soundInterfaceHook.Trampoline(instance, pFilename, loopFlag, fadeFrame, offsetMS, methodInfo);
         }
-        catch
+        catch (Exception ex)
         {
-            try { _soundInstanceHook.Trampoline(instance, pName, turn, methodInfo); } catch { }
+            Melon<Core>.Logger.Warning($"[Music] SoundInterface hook error: {ex.Message}");
+            try { return _soundInterfaceHook.Trampoline(instance, pFilename, loopFlag, fadeFrame, offsetMS, methodInfo); }
+            catch { return 0; }
         }
     }
 
