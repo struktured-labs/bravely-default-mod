@@ -36,7 +36,7 @@ public static unsafe class NativeBraveSubmenuPatch
         {
             // Hook BtlTopMenuLayout.Update
             var field = typeof(Il2Cpp.BtlTopMenuLayout).GetField(
-                "NativeMethodInfoPtr_Update_Public_Virtual_New_Void_Single_0",
+                "NativeMethodInfoPtr_Update_Public_Virtual_Void_Single_0",
                 System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
             if (field == null) { Melon<Core>.Logger.Warning("BraveSubmenu: Update field not found"); return; }
 
