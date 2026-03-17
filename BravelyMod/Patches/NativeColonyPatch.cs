@@ -5,113 +5,144 @@ using MelonLoader.NativeUtils;
 namespace BravelyMod.Patches;
 
 /// <summary>
-/// Colony speed mod: hooks multiple functions to accelerate fence/plant build times.
+/// Colony speed mod: accelerates fence and plant build times in Norende village.
 ///
-/// Architecture (from Ghidra reverse engineering):
-///   - ColonyTaskWatcher.FenceTask stores m_completeTime (DateTime) at offset 0x30
-///   - ColonyTaskWatcher.PlantTask stores m_completeTime (DateTime) at offset 0x30
-///   - GetRemainTime() computes: remain = m_completeTime - DateTime.Now
-///     then clamps: maxTime = TimeSpan.FromMinutes(GetMinutes()) / personnel
-///     if remain > maxTime, it clamps down and updates m_completeTime
-///   - The UI reads from GetRemainTime() every frame in _Update
-///   - Entry() calls GetRemainTime() to get current remain, then sets
-///     completeTime = now + (remain / newPersonnel)
+/// ## Architecture (Ghidra RE of GameAssembly.dll)
 ///
-/// Hook strategy:
-///   1. FenceParameter.GetMinutes() — reduces the clamp ceiling inside FenceTask.GetRemainTime
-///   2. FenceTask.GetRemainTime() — scales the returned TimeSpan for display + Entry calcs
-///   3. PlantTask.GetRemainTime() — same for plants (plants bypass FenceParameter.GetMinutes)
-///   4. DataAccessor.GetFenceRemainTime() — used when no workers assigned (personnel=0 path)
-///   5. DataAccessor.GetPlantRemainTime() — same for plants
+/// ColonyTaskWatcher.FenceTask: m_fenceId@0x28, m_completeTime@0x30 (DateTime ticks)
+/// ColonyTaskWatcher.PlantTask: m_plantId@0x28, m_completeTime@0x30 (DateTime ticks)
+/// ColonyData.Fence: personnel@0x18, progress(ms)@0x20, completeTime@0x28
+/// ColonyData.Plant: personnel@0x18, level@0x14, progress(ms)@0x20, completeTime@0x28
+///
+/// Fence minutes: FenceParameter.GetMinutes() -> ColonyFenceParameterWorkload.minutes
+/// Plant minutes: PlantParameter.GetWorkload().GetDetails(level).minutes (raw field read)
+///
+/// GetRemainTime() [workers assigned]:
+///   remain = m_completeTime - now
+///   maxTime = totalMinutes / personnel
+///   if remain > maxTime: m_completeTime = now + maxTime; remain = maxTime
+///   return max(remain, 0)
+///
+/// Entry(personnel):
+///   remain = GetRemainTime()
+///   colonyData.personnel = personnel
+///   colonyData.completeTime = now + remain / personnel
+///   Resume() -> copies to m_completeTime
+///
+/// Judge(): return GetRemainTime() == TimeSpan.Zero
+///
+/// ## Hook strategy
+///
+/// FENCES: Hook GetMinutes() alone. Works because GetRemainTime's clamp uses
+///   GetMinutes(), self-correcting m_completeTime every tick. Entry calls
+///   GetRemainTime -> all paths use GetMinutes. Existing saves auto-correct.
+///
+/// PLANTS: No hookable function for minutes. Multi-hook approach:
+///   1. Entry hook: let original run, then scale m_completeTime once (/mult)
+///   2. GetRemainTime hook: for existing saves, scale m_completeTime once on
+///      first call per task instance. Does NOT scale the return value (the
+///      adjusted m_completeTime makes the return naturally correct).
+///   3. DataAccessor.GetPlantRemainTime: scale no-workers path result
+///   4. Reduce hook: scale the minMinutes argument
 /// </summary>
 public static unsafe class NativeColonyPatch
 {
-    // ── Delegate types ──────────────────────────────────────────────────
+    // ── Delegates ───────────────────────────────────────────────────────
 
-    // int GetMinutes(this FenceParameter, MethodInfo*)
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate int d_GetMinutes(nint instance, nint methodInfo);
 
-    // TimeSpan GetRemainTime(this FenceTask/PlantTask, MethodInfo*)
-    // TimeSpan is a struct with a single long (Ticks), returned as long in native.
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate long d_GetRemainTime(nint instance, nint methodInfo);
 
-    // TimeSpan GetFenceRemainTime(this DataAccessor, FenceId, MethodInfo*)
-    // FenceId is an int enum
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    private delegate long d_GetFenceRemainTime(nint instance, int fenceId, nint methodInfo);
+    private delegate void d_Entry(nint instance, int personnel, nint methodInfo);
 
-    // TimeSpan GetPlantRemainTime(this DataAccessor, PlantId, MethodInfo*)
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    private delegate long d_GetPlantRemainTime(nint instance, int plantId, nint methodInfo);
+    private delegate long d_DataRemainTime(nint instance, int id, nint methodInfo);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void d_Reduce(nint instance, int minMinutes, nint methodInfo);
 
     // ── Hook storage ────────────────────────────────────────────────────
 
     private static NativeHook<d_GetMinutes> _getMinutesHook;
     private static d_GetMinutes _pinnedGetMinutes;
 
-    private static NativeHook<d_GetRemainTime> _fenceRemainHook;
-    private static d_GetRemainTime _pinnedFenceRemain;
+    private static NativeHook<d_GetRemainTime> _plantGetRemainHook;
+    private static d_GetRemainTime _pinnedPlantGetRemain;
 
-    private static NativeHook<d_GetRemainTime> _plantRemainHook;
-    private static d_GetRemainTime _pinnedPlantRemain;
+    private static NativeHook<d_Entry> _plantEntryHook;
+    private static d_Entry _pinnedPlantEntry;
 
-    private static NativeHook<d_GetFenceRemainTime> _fenceRemainDataHook;
-    private static d_GetFenceRemainTime _pinnedFenceRemainData;
+    private static NativeHook<d_DataRemainTime> _plantDataRemainHook;
+    private static d_DataRemainTime _pinnedPlantDataRemain;
 
-    private static NativeHook<d_GetPlantRemainTime> _plantRemainDataHook;
-    private static d_GetPlantRemainTime _pinnedPlantRemainData;
+    private static NativeHook<d_Reduce> _plantReduceHook;
+    private static d_Reduce _pinnedPlantReduce;
 
     private static int _logCount = 0;
-    private const int MaxLogs = 20;
+    private const int MaxLogs = 40;
+
+    /// <summary>
+    /// Tracks plant task instances whose m_completeTime has been scaled.
+    /// Prevents re-scaling on every GetRemainTime tick.
+    /// Entry clears the entry, then re-adds after scaling.
+    /// </summary>
+    private static readonly System.Collections.Generic.HashSet<nint> _scaledPlants = new();
+
+    /// <summary>
+    /// Guard: set during Entry so GetRemainTime (called inside Entry) skips scaling.
+    /// Entry will handle the scaling itself after the original returns.
+    /// </summary>
+    [ThreadStatic] private static bool _inPlantEntry;
 
     // ── Apply ───────────────────────────────────────────────────────────
 
     public static void Apply()
     {
-        // 1. Hook FenceParameter.GetMinutes — reduces the clamp inside FenceTask.GetRemainTime
-        HookMethod<d_GetMinutes>(
+        Melon<Core>.Logger.Msg($"[Colony] Applying colony speed hooks (multiplier={Core.ColonySpeedMultiplier.Value}x, enabled={Core.ColonyModEnabled.Value})");
+        Melon<Core>.Logger.Msg("[Colony] Note: 'Time' display on colony screen shows original cached duration from build start; 'remaining' time is live and correctly scaled.");
+
+        // --- FENCE: single hook handles everything ---
+        Install<d_GetMinutes>(
             typeof(Il2Cpp.ColonyShare.DataAccessor.FenceParameter),
             "NativeMethodInfoPtr_GetMinutes_Public_Int32_0",
             GetMinutes_Hook, ref _pinnedGetMinutes, ref _getMinutesHook,
             "FenceParameter.GetMinutes");
 
-        // 2. Hook FenceTask.GetRemainTime — scales remaining time for fences
-        HookMethod<d_GetRemainTime>(
-            typeof(Il2Cpp.ColonyTaskWatcher.FenceTask),
-            "NativeMethodInfoPtr_GetRemainTime_Internal_TimeSpan_0",
-            FenceRemainTime_Hook, ref _pinnedFenceRemain, ref _fenceRemainHook,
-            "FenceTask.GetRemainTime");
-
-        // 3. Hook PlantTask.GetRemainTime — scales remaining time for plants
-        HookMethod<d_GetRemainTime>(
+        // --- PLANT: multi-hook ---
+        Install<d_GetRemainTime>(
             typeof(Il2Cpp.ColonyTaskWatcher.PlantTask),
             "NativeMethodInfoPtr_GetRemainTime_Public_TimeSpan_0",
-            PlantRemainTime_Hook, ref _pinnedPlantRemain, ref _plantRemainHook,
+            PlantGetRemainTime_Hook, ref _pinnedPlantGetRemain, ref _plantGetRemainHook,
             "PlantTask.GetRemainTime");
 
-        // 4. Hook DataAccessor.GetFenceRemainTime — no-workers path for fences
-        HookMethod<d_GetFenceRemainTime>(
-            typeof(Il2Cpp.ColonyShare.DataAccessor),
-            "NativeMethodInfoPtr_GetFenceRemainTime_Public_TimeSpan_FenceId_0",
-            FenceRemainTimeData_Hook, ref _pinnedFenceRemainData, ref _fenceRemainDataHook,
-            "DataAccessor.GetFenceRemainTime");
+        Install<d_Entry>(
+            typeof(Il2Cpp.ColonyTaskWatcher.PlantTask),
+            "NativeMethodInfoPtr_Entry_Public_Void_Int32_0",
+            PlantEntry_Hook, ref _pinnedPlantEntry, ref _plantEntryHook,
+            "PlantTask.Entry");
 
-        // 5. Hook DataAccessor.GetPlantRemainTime — no-workers path for plants
-        HookMethod<d_GetPlantRemainTime>(
+        Install<d_DataRemainTime>(
             typeof(Il2Cpp.ColonyShare.DataAccessor),
             "NativeMethodInfoPtr_GetPlantRemainTime_Public_TimeSpan_PlantId_0",
-            PlantRemainTimeData_Hook, ref _pinnedPlantRemainData, ref _plantRemainDataHook,
+            PlantDataRemainTime_Hook, ref _pinnedPlantDataRemain, ref _plantDataRemainHook,
             "DataAccessor.GetPlantRemainTime");
+
+        Install<d_Reduce>(
+            typeof(Il2Cpp.ColonyTaskWatcher.PlantTask),
+            "NativeMethodInfoPtr_Reduce_Public_Void_Int32_0",
+            PlantReduce_Hook, ref _pinnedPlantReduce, ref _plantReduceHook,
+            "PlantTask.Reduce");
     }
 
-    // ── Hook helpers ────────────────────────────────────────────────────
+    // ── Generic hook installer ──────────────────────────────────────────
 
-    private static void HookMethod<TDelegate>(
+    private static void Install<T>(
         System.Type type, string fieldName,
-        TDelegate hookFn, ref TDelegate pinned, ref NativeHook<TDelegate> hook,
-        string label) where TDelegate : System.Delegate
+        T hookFn, ref T pinned, ref NativeHook<T> hook,
+        string label) where T : System.Delegate
     {
         try
         {
@@ -119,111 +150,207 @@ public static unsafe class NativeColonyPatch
                 System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
             if (field == null)
             {
-                Melon<Core>.Logger.Warning($"Colony: {label} field '{fieldName}' not found");
+                Melon<Core>.Logger.Warning($"Colony: {label} - field not found: {fieldName}");
                 return;
             }
             var mi = (nint)field.GetValue(null);
-            if (mi == 0)
-            {
-                Melon<Core>.Logger.Warning($"Colony: {label} MethodInfo pointer is null");
-                return;
-            }
+            if (mi == 0) { Melon<Core>.Logger.Warning($"Colony: {label} - null MethodInfo"); return; }
             var native = *(nint*)mi;
             pinned = hookFn;
-            hook = new NativeHook<TDelegate>(native, Marshal.GetFunctionPointerForDelegate(pinned));
+            hook = new NativeHook<T>(native, Marshal.GetFunctionPointerForDelegate(pinned));
             hook.Attach();
-            Melon<Core>.Logger.Msg($"Colony: {label} hook @ 0x{native:X}");
+            Melon<Core>.Logger.Msg($"Colony: {label} hooked @ 0x{native:X}");
         }
         catch (System.Exception ex)
         {
-            Melon<Core>.Logger.Warning($"Colony: {label} failed: {ex.Message}");
+            Melon<Core>.Logger.Warning($"Colony: {label} - {ex.Message}");
         }
     }
 
-    private static long ScaleTimeSpan(long ticks)
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    private static float Mult => System.Math.Max(1.0f, Core.ColonySpeedMultiplier.Value);
+    private static bool Enabled => Core.ColonyModEnabled.Value && Mult > 1.0f;
+
+    private static void Log(string msg)
     {
-        if (!Core.ColonyModEnabled.Value) return ticks;
-        var mult = (double)Core.ColonySpeedMultiplier.Value;
-        if (mult <= 1.0) return ticks;
-        long result = (long)(ticks / mult);
-        // Minimum 1 second if there was any time at all
-        if (ticks > 0 && result < System.TimeSpan.TicksPerSecond)
-            result = System.TimeSpan.TicksPerSecond;
-        return result;
+        if (++_logCount <= MaxLogs) Melon<Core>.Logger.Msg(msg);
     }
 
-    private static void LogOnce(string msg)
+    private static string TS(long ticks) =>
+        System.TimeSpan.FromTicks(System.Math.Abs(ticks)).ToString(@"d\.hh\:mm\:ss");
+
+    /// <summary>
+    /// Scale m_completeTime (offset 0x30) on a plant task instance, ONCE.
+    /// Subsequent calls for the same pointer are no-ops.
+    /// </summary>
+    private static void ScaleCompleteTimeOnce(nint taskPtr, string label)
     {
-        _logCount++;
-        if (_logCount <= MaxLogs)
-            Melon<Core>.Logger.Msg(msg);
+        if (_scaledPlants.Contains(taskPtr)) return;
+
+        long completeTicks = *(long*)(taskPtr + 0x30);
+        long nowTicks = System.DateTime.Now.Ticks;
+        long remainTicks = completeTicks - nowTicks;
+
+        if (remainTicks <= 0)
+        {
+            _scaledPlants.Add(taskPtr);
+            return; // already complete
+        }
+
+        double mult = Mult;
+        long scaled = System.Math.Max((long)(remainTicks / mult), System.TimeSpan.TicksPerSecond);
+        *(long*)(taskPtr + 0x30) = nowTicks + scaled;
+        _scaledPlants.Add(taskPtr);
+
+        Log($"[Colony] {label}: m_completeTime {TS(remainTicks)} -> {TS(scaled)} (/{mult})");
     }
 
-    // ── Hook implementations ────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════
+    //  FENCE: GetMinutes hook
+    // ═══════════════════════════════════════════════════════════════════
 
-    private static int GetMinutes_Hook(nint instance, nint methodInfo)
+    /// <summary>
+    /// Reduces fence build minutes. GetRemainTime's clamp uses this, so it
+    /// self-corrects m_completeTime every tick. Handles all fence scenarios.
+    /// </summary>
+    private static int GetMinutes_Hook(nint self, nint mi)
     {
         try
         {
-            var orig = _getMinutesHook.Trampoline(instance, methodInfo);
-            if (!Core.ColonyModEnabled.Value) return orig;
-            var mult = Core.ColonySpeedMultiplier.Value;
-            int result = System.Math.Max(1, (int)(orig / mult));
-            LogOnce($"[Colony] GetMinutes: {orig} -> {result} (x{mult})");
+            int orig = _getMinutesHook.Trampoline(self, mi);
+            if (!Enabled) return orig;
+            int result = System.Math.Max(1, (int)(orig / Mult));
+            Log($"[Colony] FenceGetMinutes: {orig} -> {result} (/{Mult})");
             return result;
         }
         catch { return 1; }
     }
 
-    private static long FenceRemainTime_Hook(nint instance, nint methodInfo)
+    // ═══════════════════════════════════════════════════════════════════
+    //  PLANT: GetRemainTime hook
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Handles existing saves: on first call per task, scale m_completeTime.
+    /// Then call original (which now computes from the adjusted m_completeTime).
+    /// Does NOT scale the return value -- avoids double-scaling spiral.
+    /// </summary>
+    private static long PlantGetRemainTime_Hook(nint self, nint mi)
     {
         try
         {
-            var orig = _fenceRemainHook.Trampoline(instance, methodInfo);
-            if (!Core.ColonyModEnabled.Value) return orig;
-            var scaled = ScaleTimeSpan(orig);
-            LogOnce($"[Colony] FenceTask.GetRemainTime: {System.TimeSpan.FromTicks(orig)} -> {System.TimeSpan.FromTicks(scaled)}");
-            return scaled;
+            if (!_inPlantEntry && Enabled)
+            {
+                // First-time correction for existing saves or after Resume
+                ScaleCompleteTimeOnce(self, "PlantGetRemain[existing]");
+            }
+
+            // Call original. If m_completeTime was just scaled, the original
+            // computes a naturally smaller remain. The original's own clamp
+            // (using raw Details.minutes) won't trigger because our scaled
+            // remain is always < rawMinutes/personnel.
+            return _plantGetRemainHook.Trampoline(self, mi);
         }
         catch { return 0; }
     }
 
-    private static long PlantRemainTime_Hook(nint instance, nint methodInfo)
+    // ═══════════════════════════════════════════════════════════════════
+    //  PLANT: Entry hook
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// After Entry sets m_completeTime, scale it. Guard prevents
+    /// GetRemainTime (called inside Entry) from pre-scaling.
+    /// </summary>
+    private static void PlantEntry_Hook(nint self, int personnel, nint mi)
     {
         try
         {
-            var orig = _plantRemainHook.Trampoline(instance, methodInfo);
-            if (!Core.ColonyModEnabled.Value) return orig;
-            var scaled = ScaleTimeSpan(orig);
-            LogOnce($"[Colony] PlantTask.GetRemainTime: {System.TimeSpan.FromTicks(orig)} -> {System.TimeSpan.FromTicks(scaled)}");
-            return scaled;
+            // Clear tracking so we can re-scale after this Entry
+            _scaledPlants.Remove(self);
+
+            // Guard: suppress GetRemainTime scaling inside Entry
+            _inPlantEntry = true;
+            try { _plantEntryHook.Trampoline(self, personnel, mi); }
+            finally { _inPlantEntry = false; }
+
+            if (!Enabled) { _scaledPlants.Add(self); return; }
+
+            // Scale the freshly-set m_completeTime
+            long completeTicks = *(long*)(self + 0x30);
+            long nowTicks = System.DateTime.Now.Ticks;
+            long remainTicks = completeTicks - nowTicks;
+
+            if (remainTicks <= 0) { _scaledPlants.Add(self); return; }
+
+            double mult = Mult;
+            long scaled = System.Math.Max((long)(remainTicks / mult), System.TimeSpan.TicksPerSecond);
+            *(long*)(self + 0x30) = nowTicks + scaled;
+            _scaledPlants.Add(self);
+
+            Log($"[Colony] PlantEntry({personnel}): {TS(remainTicks)} -> {TS(scaled)} (/{mult})");
+        }
+        catch
+        {
+            _inPlantEntry = false;
+            try { _plantEntryHook.Trampoline(self, personnel, mi); } catch { }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  PLANT: DataAccessor.GetPlantRemainTime (no-workers path)
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// When no workers are assigned, returns totalMinutes - progress.
+    /// Scale the result so the displayed "required time" is reduced.
+    /// Skip scaling when called from Entry (guard flag) to avoid double-scaling:
+    /// Entry -> GetRemainTime -> GetPlantRemainTime (here). Entry hook will
+    /// scale m_completeTime separately.
+    /// </summary>
+    private static long PlantDataRemainTime_Hook(nint self, int plantId, nint mi)
+    {
+        try
+        {
+            long orig = _plantDataRemainHook.Trampoline(self, plantId, mi);
+            if (_inPlantEntry || !Enabled) return orig;
+            double mult = Mult;
+            long result = (long)(orig / mult);
+            if (orig > 0 && result < System.TimeSpan.TicksPerSecond)
+                result = System.TimeSpan.TicksPerSecond;
+            Log($"[Colony] PlantDataRemain[{plantId}]: {TS(orig)} -> {TS(result)}");
+            return result;
         }
         catch { return 0; }
     }
 
-    private static long FenceRemainTimeData_Hook(nint instance, int fenceId, nint methodInfo)
-    {
-        try
-        {
-            var orig = _fenceRemainDataHook.Trampoline(instance, fenceId, methodInfo);
-            if (!Core.ColonyModEnabled.Value) return orig;
-            var scaled = ScaleTimeSpan(orig);
-            LogOnce($"[Colony] DataAccessor.GetFenceRemainTime[{fenceId}]: {System.TimeSpan.FromTicks(orig)} -> {System.TimeSpan.FromTicks(scaled)}");
-            return scaled;
-        }
-        catch { return 0; }
-    }
+    // ═══════════════════════════════════════════════════════════════════
+    //  PLANT: Reduce hook
+    // ═══════════════════════════════════════════════════════════════════
 
-    private static long PlantRemainTimeData_Hook(nint instance, int plantId, nint methodInfo)
+    /// <summary>
+    /// Reduce(minMinutes) caps m_completeTime to now + minMinutes.
+    /// Scale minMinutes for a tighter deadline.
+    /// Clear tracking since m_completeTime changes.
+    /// </summary>
+    private static void PlantReduce_Hook(nint self, int minMinutes, nint mi)
     {
         try
         {
-            var orig = _plantRemainDataHook.Trampoline(instance, plantId, methodInfo);
-            if (!Core.ColonyModEnabled.Value) return orig;
-            var scaled = ScaleTimeSpan(orig);
-            LogOnce($"[Colony] DataAccessor.GetPlantRemainTime[{plantId}]: {System.TimeSpan.FromTicks(orig)} -> {System.TimeSpan.FromTicks(scaled)}");
-            return scaled;
+            _scaledPlants.Remove(self);
+            int scaled = minMinutes;
+            if (Enabled)
+            {
+                scaled = System.Math.Max(1, (int)(minMinutes / Mult));
+                Log($"[Colony] PlantReduce: {minMinutes} min -> {scaled} min");
+            }
+            _plantReduceHook.Trampoline(self, scaled, mi);
+            _scaledPlants.Add(self); // Reduce already set a scaled m_completeTime
         }
-        catch { return 0; }
+        catch
+        {
+            try { _plantReduceHook.Trampoline(self, minMinutes, mi); } catch { }
+        }
     }
 }

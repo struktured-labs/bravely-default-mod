@@ -62,6 +62,8 @@ public static unsafe class NativeMusicPatch
 
     private static CriPlayer _customPlayer;
     private static bool _customPlaying;
+    private static bool _customPaused;
+    private static string _pausedHcaPath;
     private static int _logCount;
 
     public static void Apply()
@@ -174,12 +176,25 @@ public static unsafe class NativeMusicPatch
     {
         try
         {
-            StopCustomPlayer();
+            PauseCustomPlayer();
             _stopBGMHook.Trampoline(instance, fadeFrame, methodInfo);
         }
         catch
         {
             try { _stopBGMHook.Trampoline(instance, fadeFrame, methodInfo); } catch { }
+        }
+    }
+
+    private static void SoundInterfaceStopBGM_Hook(nint instance, nint pFilename, int fadeFrame, nint methodInfo)
+    {
+        try
+        {
+            PauseCustomPlayer();
+            _siStopBGMHook.Trampoline(instance, pFilename, fadeFrame, methodInfo);
+        }
+        catch
+        {
+            try { _siStopBGMHook.Trampoline(instance, pFilename, fadeFrame, methodInfo); } catch { }
         }
     }
 
@@ -347,7 +362,8 @@ overrides:
                 return PlayCustomHCA(hcaPath);
             }
 
-            StopCustomPlayer();
+            // Non-overridden cue — fully dispose custom player since we're switching
+            DisposeCustomPlayer();
             return _playBGMHook.Trampoline(instance, pFilename, loopFlag, fadeFrame, methodInfo);
         }
         catch (Exception ex)
@@ -371,13 +387,13 @@ overrides:
             if (filename != null && _overrides.TryGetValue(filename, out var hcaPath))
             {
                 Melon<Core>.Logger.Msg($"[Music] Intercepting (SoundInterface) {filename} -> custom HCA");
-                StopCustomPlayer();
                 PlayCustomHCA(hcaPath);
                 // Skip original playback — return null SoundInstance
                 return 0;
             }
 
-            StopCustomPlayer();
+            // Non-overridden cue — fully dispose custom player since we're switching
+            DisposeCustomPlayer();
             return _soundInterfaceHook.Trampoline(instance, pFilename, loopFlag, fadeFrame, offsetMS, methodInfo);
         }
         catch (Exception ex)
@@ -396,6 +412,9 @@ overrides:
     {
         try
         {
+            // Don't restart if paused — the player is intentionally suspended
+            if (_customPaused) return;
+
             if (_customPlaying && _customPlayer != null && _currentHcaPath != null)
             {
                 var status = _customPlayer.GetStatus();
@@ -415,7 +434,18 @@ overrides:
     {
         try
         {
-            StopCustomPlayer();
+            // If the same cue is being resumed (e.g., after menu close), just unpause
+            if (_customPaused && _customPlayer != null && _pausedHcaPath == hcaPath)
+            {
+                _customPlayer.Resume(Il2CppCriWare.CriAtomEx.ResumeMode.AllPlayback);
+                _customPlaying = true;
+                _customPaused = false;
+                Melon<Core>.Logger.Msg("[Music] Custom playback resumed (same cue)");
+                return 0;
+            }
+
+            // Different cue or no paused player — full dispose and create new
+            DisposeCustomPlayer();
             _currentHcaPath = hcaPath;
             _customPlayer = new CriPlayer(256, 1);
             if (_customPlayer == null || !_customPlayer.isAvailable) return 0;
@@ -434,11 +464,39 @@ overrides:
         }
     }
 
-    private static void StopCustomPlayer()
+    /// <summary>
+    /// Pauses the custom player instead of disposing it, so it can be resumed
+    /// when the same cue is requested again (e.g., after closing the overworld menu).
+    /// </summary>
+    private static void PauseCustomPlayer()
     {
         try
         {
             if (_customPlayer != null && _customPlaying)
+            {
+                _customPlayer.Pause();
+                _customPlaying = false;
+                _customPaused = true;
+                _pausedHcaPath = _currentHcaPath;
+                Melon<Core>.Logger.Msg("[Music] Custom player paused");
+            }
+        }
+        catch
+        {
+            _customPaused = false;
+            _pausedHcaPath = null;
+        }
+    }
+
+    /// <summary>
+    /// Fully disposes the custom player. Called when switching to a different cue
+    /// or during full cleanup.
+    /// </summary>
+    private static void DisposeCustomPlayer()
+    {
+        try
+        {
+            if (_customPlayer != null && (_customPlaying || _customPaused))
             {
                 _customPlayer.Stop(false);
                 _customPlaying = false;
@@ -448,11 +506,17 @@ overrides:
                 _customPlayer.Dispose();
                 _customPlayer = null;
             }
+            _customPaused = false;
+            _pausedHcaPath = null;
+            _currentHcaPath = null;
         }
         catch
         {
             _customPlayer = null;
             _customPlaying = false;
+            _customPaused = false;
+            _pausedHcaPath = null;
+            _currentHcaPath = null;
         }
     }
 }

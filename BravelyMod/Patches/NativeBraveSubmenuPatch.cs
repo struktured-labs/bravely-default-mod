@@ -144,26 +144,23 @@ public static unsafe class NativeBraveSubmenuPatch
             nint mainWndProc = *(nint*)(instance + OFF_MAIN_WND_PROC);
             if (mainWndProc == 0) return;
 
-            // Read phase before calling _updateShortcutKeys, because _pushCmdBrave
-            // (called internally when Brave button detected) may modify phase or other state
-            int phaseBefore = *(int*)(instance + OFF_PHASE);
-
             // Call _updateShortcutKeys on MainWndProc — this checks for BR/BL button input
             // and calls _pushCmdBrave if pressed. It reads PadSampler from
             // MainWndProc->m_pBtlTopMenuLayout->PadSampler (same input source as Update).
             _shortcutKeysFn(mainWndProc, _shortcutKeysMethodInfo);
 
-            // If _pushCmdBrave fired, it may have changed the phase (e.g., adding a brave
-            // command could trigger UI transitions). Restore phase to SubMenuPhase so the
-            // submenu stays open and the player can continue selecting actions.
+            // Note: _pushCmdBrave (triggered internally when Brave is detected) causes
+            // a UI transition back to the main command menu. We intentionally do NOT
+            // restore the phase here — the brave action slot was added successfully,
+            // and the player returns to the main menu to re-enter the submenu.
+            // This gives predictable, consistent behavior rather than the previous
+            // approach of restoring phase which worked inconsistently.
             int phaseAfter = *(int*)(instance + OFF_PHASE);
-            if (phaseAfter != phaseBefore)
+            if (phaseAfter != phase)
             {
                 _logCount++;
                 if (_logCount <= 20)
-                    Melon<Core>.Logger.Msg($"BraveSubmenu: Brave triggered in submenu! Phase {phaseBefore} -> {phaseAfter}, restoring to {PHASE_SUB_MENU}");
-
-                *(int*)(instance + OFF_PHASE) = PHASE_SUB_MENU;
+                    Melon<Core>.Logger.Msg($"BraveSubmenu: Brave triggered in submenu! Phase {phase} -> {phaseAfter} (returning to main menu)");
             }
         }
         catch (System.Exception ex)
