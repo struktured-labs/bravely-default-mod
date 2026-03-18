@@ -305,18 +305,39 @@ public static unsafe class NativeBraveSubmenuPatch
                     nint actionPoint = *(nint*)(btlChara + 0x148);
                     if (actionPoint != 0)
                     {
+                        // Test: vtable+3000 only (sound/aura?)
+                        // Skipping vtable+0x6d8
+                        try
+                        {
+                            nint vtable = *(nint*)btlChara;
+                            if (vtable != 0)
+                            {
+                                nint fn3000 = *(nint*)(vtable + 3000);
+                                nint mi3000 = *(nint*)(vtable + 0xbc0);
+                                if (fn3000 != 0)
+                                {
+                                    var call = Marshal.GetDelegateForFunctionPointer<d_VtableCall_ByteArg>(fn3000);
+                                    call(btlChara, 1, mi3000);
+                                }
+                            }
+                        }
+                        catch (System.Exception ex)
+                        {
+                            _logCount++;
+                            if (_logCount <= 5) Log($"Vtable 3000 failed: {ex.Message}");
+                        }
+
                         _addAP(actionPoint, 1);
                         _addCommandWindow(dscreenGuiBg, 0, _addCommandWindow_mi);
 
                         if (_addPredictedBp != null && charaCtrl != 0)
                             _addPredictedBp(charaCtrl, btlChara, -1, _addPredictedBp_mi);
 
-                        // Tutorial message (vanilla calls this too)
                         if (_addMessage != null)
                             _addMessage(btlLayoutCtrl, 0, _addMessage_mi);
 
                         _logCount++;
-                        if (_logCount <= 20) Log("Brave from submenu (direct, cursor stays)!");
+                        if (_logCount <= 20) Log("Brave from submenu (direct+0x6d8 only)!");
                         return;
                     }
                 }
