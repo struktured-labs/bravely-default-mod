@@ -49,6 +49,23 @@ public class Core : MelonMod
     // Custom battle music
     public static MelonPreferences_Entry<bool> CustomBattleMusicEnabled { get; private set; }
 
+    // Monster/Boss stat scaling
+    public static MelonPreferences_Entry<bool> MonsterScalingEnabled { get; private set; }
+    public static MelonPreferences_Entry<float> MonsterHpMult { get; private set; }
+    public static MelonPreferences_Entry<float> MonsterAtkMult { get; private set; }
+    public static MelonPreferences_Entry<float> MonsterDefMult { get; private set; }
+    public static MelonPreferences_Entry<float> MonsterMAtkMult { get; private set; }
+    public static MelonPreferences_Entry<float> MonsterMDefMult { get; private set; }
+    public static MelonPreferences_Entry<float> MonsterSpeedMult { get; private set; }
+    public static MelonPreferences_Entry<float> MonsterRewardMult { get; private set; }
+    public static MelonPreferences_Entry<float> BossHpMult { get; private set; }
+    public static MelonPreferences_Entry<float> BossAtkMult { get; private set; }
+    public static MelonPreferences_Entry<float> BossDefMult { get; private set; }
+    public static MelonPreferences_Entry<float> BossMAtkMult { get; private set; }
+    public static MelonPreferences_Entry<float> BossMDefMult { get; private set; }
+    public static MelonPreferences_Entry<float> BossSpeedMult { get; private set; }
+    public static MelonPreferences_Entry<float> BossRewardMult { get; private set; }
+
     private static bool _initialized = false;
     private static HarmonyLib.Harmony _harmony;
 
@@ -91,6 +108,22 @@ public class Core : MelonMod
 
         CustomBattleMusicEnabled = Config.CreateEntry("CustomBattleMusicEnabled", true, "Replace normal battle BGM with custom music");
 
+        MonsterScalingEnabled = Config.CreateEntry("MonsterScalingEnabled", false, "Enable monster/boss stat scaling");
+        MonsterHpMult = Config.CreateEntry("MonsterHpMult", 1.0f, "Monster HP multiplier");
+        MonsterAtkMult = Config.CreateEntry("MonsterAtkMult", 1.0f, "Monster ATK/STR multiplier");
+        MonsterDefMult = Config.CreateEntry("MonsterDefMult", 1.0f, "Monster DEF/STA multiplier");
+        MonsterMAtkMult = Config.CreateEntry("MonsterMAtkMult", 1.0f, "Monster MATK/INT multiplier");
+        MonsterMDefMult = Config.CreateEntry("MonsterMDefMult", 1.0f, "Monster MDEF/MND multiplier");
+        MonsterSpeedMult = Config.CreateEntry("MonsterSpeedMult", 1.0f, "Monster SPD/AGI/DEX/CRIT multiplier");
+        MonsterRewardMult = Config.CreateEntry("MonsterRewardMult", 1.0f, "Monster EXP/Gil/JP reward multiplier");
+        BossHpMult = Config.CreateEntry("BossHpMult", 1.0f, "Boss HP multiplier");
+        BossAtkMult = Config.CreateEntry("BossAtkMult", 1.0f, "Boss ATK/STR multiplier");
+        BossDefMult = Config.CreateEntry("BossDefMult", 1.0f, "Boss DEF/STA multiplier");
+        BossMAtkMult = Config.CreateEntry("BossMAtkMult", 1.0f, "Boss MATK/INT multiplier");
+        BossMDefMult = Config.CreateEntry("BossMDefMult", 1.0f, "Boss MDEF/MND multiplier");
+        BossSpeedMult = Config.CreateEntry("BossSpeedMult", 1.0f, "Boss SPD/AGI/DEX/CRIT multiplier");
+        BossRewardMult = Config.CreateEntry("BossRewardMult", 1.0f, "Boss EXP/Gil/JP reward multiplier");
+
         // Native hooks (these actually work on Unity 6 IL2CPP)
         LoggerInstance.Msg("Applying native hooks...");
         if (ExpBoostEnabled.Value)
@@ -125,6 +158,7 @@ public class Core : MelonMod
             Patches.NativeDamageCapPatch.Apply();
         if (CustomBattleMusicEnabled.Value)
             Patches.NativeMusicPatch.Apply();
+        Patches.NativeMonsterScalingPatch.Apply();
 
         // Harmony patches (registered but may not intercept on Unity 6 — keeping for future compat)
         _harmony = new HarmonyLib.Harmony("com.struktured.bravelymod");
@@ -165,6 +199,7 @@ public class Core : MelonMod
         LoggerInstance.Msg($"  Support$:  {(SupportCostModEnabled.Value ? $"{SupportCostOverride.Value}" : "OFF")}");
         LoggerInstance.Msg($"  WalkSpeed: {(WalkSpeedModEnabled.Value ? $"x{WalkSpeedMultiplier.Value}" : "OFF")}");
         LoggerInstance.Msg($"  BattleBGM: {(CustomBattleMusicEnabled.Value ? "custom" : "OFF")}");
+        LoggerInstance.Msg($"  Scaling:   {(MonsterScalingEnabled.Value ? $"Mon(hp={MonsterHpMult.Value}x atk={MonsterAtkMult.Value}x) Boss(hp={BossHpMult.Value}x atk={BossAtkMult.Value}x)" : "OFF")}");
         LoggerInstance.Msg("Edit UserData/MelonPreferences.cfg to toggle features.");
 
         // Start web config server for live editing

@@ -1,8 +1,77 @@
 # Bravely Default Mod Toolkit
 
-A comprehensive toolkit for modding Bravely Default, including automated patch generation for the 999k damage limit mod and crowd data editing.
+Comprehensive modding toolkit for **Bravely Default** — covering both the 3DS original (ROM patching) and the **Flying Fairy HD** Steam remaster (runtime hooks).
 
-## Features
+## BDFFHD — BravelyMod (Steam Remaster)
+
+A MelonLoader mod for Bravely Default: Flying Fairy HD with 18 native hooks, a web config UI, and custom music support. Works on Linux (Proton) and Windows.
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| **EXP/JP/Gold Multiplier** | Configurable multipliers (default 10x/1000x/100x) |
+| **Damage Cap Removal** | Raise cap from 9,999 to 999,999 |
+| **BP System Overhaul** | BP limit 9, +2 BP/turn, brave from any submenu with sound+aura |
+| **Battle Speed** | Configurable multiplier on top of in-game speed (default 4x) |
+| **Monster/Boss Scaling** | Per-stat multipliers for HP, ATK, DEF, MATK, MDEF, SPD, rewards — separate for monsters and bosses |
+| **Colony Speed** | Accelerate Norende fence/plant build times (default 10x) |
+| **Walk Speed** | Skip Trotter built-in — configurable dash multiplier |
+| **Scene Skip** | Force scene skip always available |
+| **Support Cost** | Override support ability equip cost (default 1 slot) |
+| **Buff Limit Removal** | Remove buff stack limits |
+| **Custom Battle Music** | Replace any BGM cue with custom HCA audio files |
+| **Web Config UI** | Live settings editor at localhost:8888 with dark theme |
+
+### Requirements
+
+- **Steam app ID:** 2833580
+- **MelonLoader** v0.7.2+ (auto-generates IL2CPP proxy assemblies)
+- **Steam launch options:** `WINEDLLOVERRIDES="version=n,b" %command%` (Linux/Proton)
+
+### Build & Deploy
+
+```bash
+dotnet build BravelyMod/   # builds and auto-deploys to game Mods/ folder
+```
+
+### Configuration
+
+All settings persist to `UserData/MelonPreferences.cfg` and can be edited live via the web UI at `http://localhost:8888`.
+
+Pages: Dashboard, AutoBattle Editor, Music Overrides, Settings, Enemy Scaling, Mod Status.
+
+### Architecture
+
+The mod uses **native hooks** via `NativeHook<T>` with pinned delegates and unsafe pointers — Harmony patches don't intercept on Unity 6 IL2CPP. Each feature is a self-contained patch in `BravelyMod/Patches/`:
+
+```
+BravelyMod/
+├── Core.cs                          # MelonMod entry, config, patch registration
+├── Patches/
+│   ├── NativeBPPatch.cs             # BP limit + VirtualProtect memory patches
+│   ├── NativeBraveSubmenuPatch.cs   # Brave from any menu depth with sound
+│   ├── NativeBattleSpeedPatch.cs    # Battle speed multiplier
+│   ├── NativeMonsterScalingPatch.cs # Per-stat monster/boss scaling
+│   ├── NativeColonyPatch.cs         # Colony build speed (5 hooks)
+│   ├── NativeDamageCapPatch.cs      # Damage cap override
+│   ├── NativeMusicPatch.cs          # Custom HCA music via CriAtomExPlayer
+│   ├── NativeResultDisplayPatch.cs  # EXP/JP/Gold multiplication
+│   └── ...                          # 18 native patches total
+├── AutoBattle/
+│   ├── RuleEngine.cs                # DSL engine for autobattle rules
+│   └── ProfileConfig.cs             # YAML config + DSL parser
+└── WebConfig/
+    └── ConfigServer.cs              # Web UI on localhost:8888
+```
+
+---
+
+## Bravely Default 3DS — ROM Patching
+
+Automated patch generation for the original 3DS game, including the 999k damage limit mod and crowd data editing.
+
+### Features
 
 - **999k Damage Limit Patch**: Increases the damage cap from 9,999 to 999,999
 - **IPS Patch Generation**: Creates distributable IPS patches from ROM modifications
@@ -10,206 +79,84 @@ A comprehensive toolkit for modding Bravely Default, including automated patch g
 - **Automated Build Pipeline**: Simple make commands to generate patches
 - **Docker Support**: Containerized Ghidra for reproducible builds
 
-## Quick Start
+### Quick Start
 
-### Prerequisites
+#### Prerequisites
 
 - A legally obtained Bravely Default CIA file
-- One of the following:
-  - [Pixi](https://prefix.dev/docs/pixi/overview) (recommended)
-  - Conda/Micromamba
-  - Docker (for Ghidra-only workflow)
+- [Pixi](https://prefix.dev/docs/pixi/overview) (recommended), Conda/Micromamba, or Docker
 
-### Setup
+#### Setup
 
-1. Clone the repository:
 ```bash
-git clone <repo-url>
+git clone git@github.com:struktured-labs/bravely-default-mod.git
 cd bravely-default-mod
-```
-
-2. Initialize submodules and set up environment:
-```bash
 make setup
-make pixi-install  # Or 'make environment' for conda
+make pixi-install
 ```
 
-3. Place your Bravely Default CIA file in the `cias/` directory
-
-### Generate the 999k Damage Limit Patch
-
-Run the complete workflow to generate an IPS patch:
+Place your CIA file in `cias/`, then:
 
 ```bash
 make patch-workflow cia_file=cias/bravely-default.cia
 ```
 
-This will:
-1. Extract the CIA file
-2. Apply Ghidra patches to code.bin
-3. Generate an IPS patch file at `build/patches/bd_999k_limit.ips`
+This extracts the CIA, applies Ghidra patches, and generates `build/patches/bd_999k_limit.ips`.
 
-You can now distribute the `.ips` file!
-
-### Apply an IPS Patch
-
-To apply the patch to a ROM:
+#### Apply an IPS Patch
 
 ```bash
 make apply-patch
+# Or manually:
+python3 scripts/apply_ips_patch.py --patch build/patches/bd_999k_limit.ips --input path/to/code.bin --backup
 ```
 
-Or manually with custom paths:
+### Crowd Data Editing
 
 ```bash
-python3 scripts/apply_ips_patch.py \
-  --patch build/patches/bd_999k_limit.ips \
-  --input path/to/code.bin \
-  --backup
+make crowd-unpack    # Extract to spreadsheets
+# Edit build/crowd-dev-unpacked/
+make crowd-pack      # Pack back
 ```
-
-## Manual Build Steps
-
-For more control, you can run individual steps:
-
-1. **Extract CIA file**:
-```bash
-make cia-unpack cia_file=cias/bravely-default.cia
-```
-
-2. **Save original ROM** (required for patch generation):
-```bash
-make save-original
-```
-
-3. **Apply Ghidra patches**:
-```bash
-make ghidra-patch
-# Or with Docker:
-make ghidra-patch-docker
-```
-
-4. **Generate IPS patch**:
-```bash
-make generate-patch
-```
-
-## Docker Workflow
-
-If you prefer to use Docker for Ghidra (avoids manual Ghidra installation):
-
-```bash
-# Build Docker image
-docker-compose build
-
-# Run Ghidra patches in Docker
-make ghidra-patch-docker
-```
-
-## Crowd Data Editing
-
-Extract game data to editable spreadsheets:
-
-```bash
-make crowd-unpack
-```
-
-Edit the spreadsheets in `build/crowd-dev-unpacked/`, then pack them back:
-
-```bash
-make crowd-pack
-```
-
-## Development
-
-### Arcanist
-
-The `arcanist` Python package provides tools for:
-- Extracting/packing crowd binary data
-- Applying code patches with ARM assembly
-- Managing memory regions for safe code injection
-
-See [arcanist/README.md](arcanist/README.md) for details.
 
 ### Ghidra Scripts
 
-Ghidra scripts are in `ghidra_scripts/`:
-- `999k-limit-patch.py` - Changes damage cap from 9999 to 999,999
-- `find_empty_addresses.py` - Finds empty memory regions for code injection
+- `ghidra_scripts/999k-limit-patch.py` — Damage cap patch
+- `ghidra_scripts/find_empty_addresses.py` — Find empty memory regions
+- `ghidra_scripts/import_il2cpp_labels.py` — Import IL2CPP labels into Ghidra
 
-### Adding Custom Patches
+---
 
-1. Create a Ghidra script or Python patch in `arcanist/patches/`
-2. Update `bin/ghidra-patch.sh` or create a new make target
-3. Run the patch workflow to generate an IPS file
+## Python Toolkit — Arcanist
 
-## Environment Management
-
-### Using Pixi (Recommended)
+The `arcanist` package provides CLI tools for game data:
 
 ```bash
-pixi install                    # Install dependencies
-pixi run crowd-unpack          # Run a task
-pixi shell                     # Enter the environment
+uv run btbf info <file.btb2>     # Inspect BTBF container
+uv run btbf dump <file.btb2>     # Decompress and dump
+uv run btbf dump-all <directory>  # Batch dump
 ```
 
-### Using Conda/Micromamba
+BTBF files (`.btb2`, `.tbl2`) use Brotli compression. The toolkit handles decompression and table parsing.
 
-```bash
-make environment               # Create environment
-micromamba activate bd-dev     # Activate environment
-```
+---
 
 ## Project Structure
 
 ```
 .
-├── arcanist/           # Python tools for ROM modification
-│   ├── crowd/         # Crowd data extraction/packing
-│   └── patches/       # Code patches
-├── bin/               # Shell scripts
-├── ghidra_scripts/    # Ghidra headless scripts
-├── scripts/           # IPS patch tools
-│   ├── generate_ips_patch.py
-│   └── apply_ips_patch.py
-├── data/              # Game data and schemas
-├── build/             # Build output (generated)
-└── Makefile           # Build automation
+├── BravelyMod/         # BDFFHD MelonLoader mod (C#, .NET 6)
+├── arcanist/           # Python tools for ROM/data modification
+│   ├── btbf/          # BTBF parser + crypto
+│   └── patches/       # 3DS code patches
+├── ghidra_scripts/     # Ghidra headless scripts
+├── scripts/            # Build, test, and conversion scripts
+├── data/               # RE notes, schemas, IL2CPP dump
+└── Makefile            # 3DS build automation
 ```
-
-## Troubleshooting
-
-### Ghidra not found
-
-If using the native Ghidra workflow (not Docker):
-- Set `GHIDRA_HOME` environment variable to your Ghidra installation
-- Or use Docker: `make ghidra-patch-docker`
-
-### Submodules not initialized
-
-```bash
-git submodule update --init
-```
-
-### Missing Python dependencies
-
-```bash
-pixi install
-# Or for conda:
-make environment
-```
-
-## Contributing
-
-Pull requests welcome! Please ensure your code passes existing tests.
-
-## License
-
-See LICENSE file for details.
 
 ## Credits
 
-- Based on the bravely-crowd project
-- Uses Ghidra for reverse engineering
-- Built with love for the Bravely Default community
-
+- Built by [struktured labs](https://github.com/struktured-labs)
+- Uses MelonLoader, Ghidra, and CriWare tools
+- Made with love for the Bravely Default community

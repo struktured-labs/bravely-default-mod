@@ -211,6 +211,14 @@ public static class ConfigServer
                     contentType = "application/json; charset=utf-8";
                     break;
 
+                case "/scaling" when method == "GET":
+                    responseBody = HandleScalingGet();
+                    break;
+
+                case "/scaling" when method == "POST":
+                    responseBody = HandleScalingPost(request);
+                    break;
+
                 default:
                     statusCode = 404;
                     responseBody = WrapHtml("Not Found", "status",
@@ -281,6 +289,12 @@ public static class ConfigServer
                     <div class=""card-title"">Settings</div>
                     <div class=""card-desc"">Edit all mod parameters live — multipliers, toggles, speeds, and more.</div>
                     <div class=""card-footer"">Changes apply immediately</div>
+                </a>
+                <a href=""/scaling"" class=""card"">
+                    <div class=""card-icon"">&#9878;</div>
+                    <div class=""card-title"">Enemy Scaling</div>
+                    <div class=""card-desc"">Scale monster and boss stats independently for harder battles.</div>
+                    <div class=""card-footer"">Monsters / Bosses</div>
                 </a>
                 <a href=""/status"" class=""card"">
                     <div class=""card-icon"">&#128202;</div>
@@ -3265,6 +3279,138 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
         }
     }
 
+    // ── Enemy Scaling ─────────────────────────────────────────────
+
+    private static string HandleScalingGet(string messageHtml = null)
+    {
+        string msgBlock = messageHtml ?? "";
+
+        string FloatInput(string name, float value, string label)
+        {
+            return $@"<div class=""setting-field"">
+                <label for=""{name}"">{WebUtility.HtmlEncode(label)}</label>
+                <input type=""number"" name=""{name}"" id=""{name}"" value=""{value}"" step=""0.1"" min=""0"" class=""num-input""/>
+            </div>";
+        }
+
+        string chk = Core.MonsterScalingEnabled.Value ? "checked" : "";
+
+        return WrapHtml("Enemy Scaling", "scaling", $@"
+            <h2>Enemy Scaling</h2>
+            <p class=""subtitle"">Scale monster and boss stats independently. Changes apply to new battles.</p>
+
+            {msgBlock}
+
+            <form method=""POST"" action=""/scaling"">
+                <label class=""setting-toggle"" style=""margin-bottom:1.5rem"">
+                    <input type=""checkbox"" name=""MonsterScalingEnabled"" value=""true"" {chk}/>
+                    <span class=""toggle-label"">Enable Enemy Scaling</span>
+                </label>
+
+                <div class=""settings-grid"">
+                    <div class=""settings-group"">
+                        <div class=""settings-group-title"">Monster Scaling</div>
+                        {FloatInput("MonsterHpMult", Core.MonsterHpMult.Value, "HP Multiplier")}
+                        {FloatInput("MonsterAtkMult", Core.MonsterAtkMult.Value, "ATK / STR")}
+                        {FloatInput("MonsterDefMult", Core.MonsterDefMult.Value, "DEF / STA")}
+                        {FloatInput("MonsterMAtkMult", Core.MonsterMAtkMult.Value, "MATK / INT")}
+                        {FloatInput("MonsterMDefMult", Core.MonsterMDefMult.Value, "MDEF / MND")}
+                        {FloatInput("MonsterSpeedMult", Core.MonsterSpeedMult.Value, "SPD / AGI / CRIT")}
+                        {FloatInput("MonsterRewardMult", Core.MonsterRewardMult.Value, "Rewards (EXP/Gil/JP)")}
+                    </div>
+
+                    <div class=""settings-group"">
+                        <div class=""settings-group-title"">Boss Scaling</div>
+                        {FloatInput("BossHpMult", Core.BossHpMult.Value, "HP Multiplier")}
+                        {FloatInput("BossAtkMult", Core.BossAtkMult.Value, "ATK / STR")}
+                        {FloatInput("BossDefMult", Core.BossDefMult.Value, "DEF / STA")}
+                        {FloatInput("BossMAtkMult", Core.BossMAtkMult.Value, "MATK / INT")}
+                        {FloatInput("BossMDefMult", Core.BossMDefMult.Value, "MDEF / MND")}
+                        {FloatInput("BossSpeedMult", Core.BossSpeedMult.Value, "SPD / AGI / CRIT")}
+                        {FloatInput("BossRewardMult", Core.BossRewardMult.Value, "Rewards (EXP/Gil/JP)")}
+                    </div>
+                </div>
+
+                <div class=""form-actions"" style=""margin-top:1.5rem"">
+                    <button type=""submit"" class=""btn btn-primary"">Save</button>
+                    <a href=""/"" class=""btn btn-secondary"">Back</a>
+                </div>
+            </form>
+        ");
+    }
+
+    private static string HandleScalingPost(HttpListenerRequest request)
+    {
+        try
+        {
+            string body;
+            using (var reader = new StreamReader(request.InputStream, request.ContentEncoding))
+                body = reader.ReadToEnd();
+
+            var changes = new List<string>();
+
+            bool ReadBool(string name) => ExtractFormValue(body, name) == "true";
+
+            float ReadFloat(string name, float fallback)
+            {
+                string val = ExtractFormValue(body, name);
+                if (val != null && float.TryParse(val, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out float result))
+                    return result;
+                return fallback;
+            }
+
+            void SetBool(MelonPreferences_Entry<bool> entry, bool newVal, string label)
+            {
+                if (entry.Value != newVal) { entry.Value = newVal; changes.Add($"{label}: {(newVal ? "ON" : "OFF")}"); }
+            }
+
+            void SetFloat(MelonPreferences_Entry<float> entry, float newVal, string label)
+            {
+                if (Math.Abs(entry.Value - newVal) > 0.0001f) { entry.Value = newVal; changes.Add($"{label}: {newVal}x"); }
+            }
+
+            SetBool(Core.MonsterScalingEnabled, ReadBool("MonsterScalingEnabled"), "Enemy Scaling");
+
+            SetFloat(Core.MonsterHpMult, ReadFloat("MonsterHpMult", Core.MonsterHpMult.Value), "Monster HP");
+            SetFloat(Core.MonsterAtkMult, ReadFloat("MonsterAtkMult", Core.MonsterAtkMult.Value), "Monster ATK");
+            SetFloat(Core.MonsterDefMult, ReadFloat("MonsterDefMult", Core.MonsterDefMult.Value), "Monster DEF");
+            SetFloat(Core.MonsterMAtkMult, ReadFloat("MonsterMAtkMult", Core.MonsterMAtkMult.Value), "Monster MATK");
+            SetFloat(Core.MonsterMDefMult, ReadFloat("MonsterMDefMult", Core.MonsterMDefMult.Value), "Monster MDEF");
+            SetFloat(Core.MonsterSpeedMult, ReadFloat("MonsterSpeedMult", Core.MonsterSpeedMult.Value), "Monster Speed");
+            SetFloat(Core.MonsterRewardMult, ReadFloat("MonsterRewardMult", Core.MonsterRewardMult.Value), "Monster Rewards");
+
+            SetFloat(Core.BossHpMult, ReadFloat("BossHpMult", Core.BossHpMult.Value), "Boss HP");
+            SetFloat(Core.BossAtkMult, ReadFloat("BossAtkMult", Core.BossAtkMult.Value), "Boss ATK");
+            SetFloat(Core.BossDefMult, ReadFloat("BossDefMult", Core.BossDefMult.Value), "Boss DEF");
+            SetFloat(Core.BossMAtkMult, ReadFloat("BossMAtkMult", Core.BossMAtkMult.Value), "Boss MATK");
+            SetFloat(Core.BossMDefMult, ReadFloat("BossMDefMult", Core.BossMDefMult.Value), "Boss MDEF");
+            SetFloat(Core.BossSpeedMult, ReadFloat("BossSpeedMult", Core.BossSpeedMult.Value), "Boss Speed");
+            SetFloat(Core.BossRewardMult, ReadFloat("BossRewardMult", Core.BossRewardMult.Value), "Boss Rewards");
+
+            Core.Config.SaveToFile(false);
+
+            if (changes.Count == 0)
+                return HandleScalingGet(MsgBox("No changes detected.", "warning"));
+
+            var sb = new StringBuilder();
+            sb.Append(MsgBoxOpen("success"));
+            sb.Append($"<strong>Saved {changes.Count} change(s)!</strong><ul>");
+            foreach (var c in changes)
+                sb.Append($"<li>{WebUtility.HtmlEncode(c)}</li>");
+            sb.Append("</ul><em>Changes apply to new battles.</em>");
+            sb.Append(MsgBoxClose());
+
+            Melon<Core>.Logger.Msg($"[WebConfig] Scaling updated: {string.Join(", ", changes)}");
+
+            return HandleScalingGet(sb.ToString());
+        }
+        catch (Exception ex)
+        {
+            return HandleScalingGet(MsgBox($"Error saving: {ex.Message}", "error"));
+        }
+    }
+
     // ── Status ──────────────────────────────────────────────────
 
     private static string HandleStatus()
@@ -3524,6 +3670,7 @@ assignments:
                     {NavLink("/autobattle", "YAML Editor", "autobattle")}
                     {NavLink("/music", "Music", "music")}
                     {NavLink("/settings", "Settings", "settings")}
+                    {NavLink("/scaling", "Scaling", "scaling")}
                     {NavLink("/status", "Status", "status")}
                 </div>
             </nav>";
