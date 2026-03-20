@@ -161,17 +161,46 @@ fi
 verbose_body
 
 # =============================================================================
+# T3.01a: Dashboard includes Enemy Scaling card
+# =============================================================================
+# Re-use body from T3.01 (already fetched)
+if [[ "$HTTP_CODE" == "200" ]]; then
+    if echo "$HTTP_BODY" | grep -qi "Enemy Scaling"; then
+        result "PASS" "T3.01a Dashboard has Enemy Scaling card" "found 'Enemy Scaling' on dashboard"
+    else
+        result "FAIL" "T3.01a Dashboard has Enemy Scaling card" "'Enemy Scaling' not found in dashboard body"
+    fi
+else
+    result "SKIP" "T3.01a Dashboard has Enemy Scaling card" "dashboard returned HTTP $HTTP_CODE"
+fi
+
+# =============================================================================
 # T3.02: GET /settings returns 200 with form
 # =============================================================================
 http_get "${BASE_URL}/settings"
-if [[ "$HTTP_CODE" == "200" ]]; then
-    if echo "$HTTP_BODY" | grep -qi "form\|input\|settings"; then
-        result "PASS" "T3.02 GET /settings" "HTTP $HTTP_CODE, form present"
+SETTINGS_BODY="$HTTP_BODY"
+SETTINGS_CODE="$HTTP_CODE"
+if [[ "$SETTINGS_CODE" == "200" ]]; then
+    if echo "$SETTINGS_BODY" | grep -qi "form\|input\|settings"; then
+        result "PASS" "T3.02 GET /settings" "HTTP $SETTINGS_CODE, form present"
     else
-        result "FAIL" "T3.02 GET /settings" "HTTP $HTTP_CODE but no form found"
+        result "FAIL" "T3.02 GET /settings" "HTTP $SETTINGS_CODE but no form found"
     fi
 else
-    result "FAIL" "T3.02 GET /settings" "HTTP $HTTP_CODE (expected 200)"
+    result "FAIL" "T3.02 GET /settings" "HTTP $SETTINGS_CODE (expected 200)"
+fi
+
+# =============================================================================
+# T3.02a: GET /settings includes Auto-Loot checkbox
+# =============================================================================
+if [[ "$SETTINGS_CODE" == "200" ]]; then
+    if echo "$SETTINGS_BODY" | grep -qi "Auto-Loot"; then
+        result "PASS" "T3.02a Settings has Auto-Loot" "found 'Auto-Loot' in settings page"
+    else
+        result "FAIL" "T3.02a Settings has Auto-Loot" "'Auto-Loot' not found in settings body"
+    fi
+else
+    result "SKIP" "T3.02a Settings has Auto-Loot" "settings returned HTTP $SETTINGS_CODE"
 fi
 
 # =============================================================================
@@ -378,6 +407,117 @@ if [[ "$VERBOSE" == "1" ]]; then
     fi
 else
     result "SKIP" "T3.16 POST /settings/reset" "skipped (destructive, use --verbose to run)"
+fi
+
+# =============================================================================
+# T3.17: GET /scaling returns 200 with "Enemy Scaling" content
+# =============================================================================
+http_get "${BASE_URL}/scaling"
+SCALING_CODE="$HTTP_CODE"
+SCALING_BODY="$HTTP_BODY"
+if [[ "$SCALING_CODE" == "200" ]]; then
+    if echo "$SCALING_BODY" | grep -qi "Enemy Scaling"; then
+        result "PASS" "T3.17 GET /scaling" "HTTP $SCALING_CODE, 'Enemy Scaling' present"
+    else
+        result "FAIL" "T3.17 GET /scaling" "HTTP $SCALING_CODE but 'Enemy Scaling' not found in body"
+    fi
+else
+    result "FAIL" "T3.17 GET /scaling" "HTTP $SCALING_CODE (expected 200)"
+fi
+verbose_body
+
+# =============================================================================
+# T3.17a: GET /scaling contains form with MonsterScalingEnabled
+# =============================================================================
+if [[ "$SCALING_CODE" == "200" ]]; then
+    if echo "$SCALING_BODY" | grep -qi "MonsterScalingEnabled"; then
+        result "PASS" "T3.17a Scaling page has toggle" "MonsterScalingEnabled checkbox found"
+    else
+        result "FAIL" "T3.17a Scaling page has toggle" "MonsterScalingEnabled checkbox not found"
+    fi
+else
+    result "SKIP" "T3.17a Scaling page has toggle" "scaling returned HTTP $SCALING_CODE"
+fi
+
+# =============================================================================
+# T3.17b: GET /scaling contains Monster Scaling + Boss Scaling groups
+# =============================================================================
+if [[ "$SCALING_CODE" == "200" ]]; then
+    SCALE_GROUPS=0
+    echo "$SCALING_BODY" | grep -qi "Monster Scaling" && SCALE_GROUPS=$((SCALE_GROUPS + 1))
+    echo "$SCALING_BODY" | grep -qi "Boss Scaling" && SCALE_GROUPS=$((SCALE_GROUPS + 1))
+    if [[ $SCALE_GROUPS -eq 2 ]]; then
+        result "PASS" "T3.17b Scaling page groups" "Monster Scaling + Boss Scaling sections present"
+    else
+        result "FAIL" "T3.17b Scaling page groups" "only ${SCALE_GROUPS}/2 scaling groups found"
+    fi
+else
+    result "SKIP" "T3.17b Scaling page groups" "scaling returned HTTP $SCALING_CODE"
+fi
+
+# =============================================================================
+# T3.18: POST /scaling with form data returns success
+# =============================================================================
+http_post "${BASE_URL}/scaling" "MonsterScalingEnabled=true"
+if [[ "$HTTP_CODE" == "200" ]] || [[ "$HTTP_CODE" == "302" ]] || [[ "$HTTP_CODE" == "303" ]]; then
+    result "PASS" "T3.18 POST /scaling" "HTTP $HTTP_CODE (scaling settings accepted)"
+else
+    result "FAIL" "T3.18 POST /scaling" "HTTP $HTTP_CODE (expected 200/302)"
+fi
+verbose_body
+
+# =============================================================================
+# T3.19: POST /scaling returns page with "Enemy Scaling" (not error)
+# =============================================================================
+# The POST handler calls HandleScalingGet() which re-renders the page
+if [[ "$HTTP_CODE" == "200" ]]; then
+    if echo "$HTTP_BODY" | grep -qi "Enemy Scaling"; then
+        result "PASS" "T3.19 POST /scaling response" "response re-renders scaling page"
+    else
+        result "FAIL" "T3.19 POST /scaling response" "response missing 'Enemy Scaling' content"
+    fi
+else
+    result "SKIP" "T3.19 POST /scaling response" "POST returned HTTP $HTTP_CODE (not 200)"
+fi
+
+# =============================================================================
+# T3.20: Dashboard nav includes all expected links
+# =============================================================================
+http_get "${BASE_URL}/"
+if [[ "$HTTP_CODE" == "200" ]]; then
+    NAV_OK=0
+    NAV_EXPECTED=0
+    NAV_MISSING=""
+    for link in "/settings" "/scaling" "/music" "/status"; do
+        NAV_EXPECTED=$((NAV_EXPECTED + 1))
+        if echo "$HTTP_BODY" | grep -qi "href=.*${link}"; then
+            NAV_OK=$((NAV_OK + 1))
+        else
+            NAV_MISSING="${NAV_MISSING} ${link}"
+        fi
+    done
+    if [[ $NAV_OK -eq $NAV_EXPECTED ]]; then
+        result "PASS" "T3.20 Dashboard nav links" "${NAV_OK}/${NAV_EXPECTED} links present"
+    else
+        result "FAIL" "T3.20 Dashboard nav links" "${NAV_OK}/${NAV_EXPECTED} — missing:${NAV_MISSING}"
+    fi
+else
+    result "FAIL" "T3.20 Dashboard nav links" "dashboard returned HTTP $HTTP_CODE"
+fi
+
+# =============================================================================
+# T3.21: Settings page Auto-Loot checkbox is an input element
+# =============================================================================
+# Re-fetch settings to get a clean body
+http_get "${BASE_URL}/settings"
+if [[ "$HTTP_CODE" == "200" ]]; then
+    if echo "$HTTP_BODY" | grep -qi "AutoLootEnabled"; then
+        result "PASS" "T3.21 Auto-Loot input field" "AutoLootEnabled input found on settings page"
+    else
+        result "FAIL" "T3.21 Auto-Loot input field" "AutoLootEnabled input not found"
+    fi
+else
+    result "SKIP" "T3.21 Auto-Loot input field" "settings returned HTTP $HTTP_CODE"
 fi
 
 # =============================================================================

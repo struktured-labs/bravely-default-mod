@@ -265,14 +265,32 @@ public static unsafe class NativeColonyPatch
     /// </summary>
     private static void PlantEntry_Hook(nint self, int personnel, nint mi)
     {
+        bool trampolineCalled = false;
         try
         {
             // Clear tracking so we can re-scale after this Entry
             _scaledPlants.Remove(self);
 
+            // Un-scale m_completeTime before Entry reads it (prevents double-scaling)
+            // Entry internally calls GetRemainTime which reads m_completeTime.
+            // If it was already scaled, Entry would see a short remain and our
+            // post-Entry scaling would compound it.
+            if (Enabled)
+            {
+                long ct = *(long*)(self + 0x30);
+                long now = System.DateTime.Now.Ticks;
+                long remain = ct - now;
+                if (remain > 0)
+                {
+                    // Restore to unscaled: remain * mult + now
+                    double mult = Mult;
+                    *(long*)(self + 0x30) = now + (long)(remain * mult);
+                }
+            }
+
             // Guard: suppress GetRemainTime scaling inside Entry
             _inPlantEntry = true;
-            try { _plantEntryHook.Trampoline(self, personnel, mi); }
+            try { _plantEntryHook.Trampoline(self, personnel, mi); trampolineCalled = true; }
             finally { _inPlantEntry = false; }
 
             if (!Enabled) { _scaledPlants.Add(self); return; }
@@ -284,17 +302,18 @@ public static unsafe class NativeColonyPatch
 
             if (remainTicks <= 0) { _scaledPlants.Add(self); return; }
 
-            double mult = Mult;
-            long scaled = System.Math.Max((long)(remainTicks / mult), System.TimeSpan.TicksPerSecond);
+            double m = Mult;
+            long scaled = System.Math.Max((long)(remainTicks / m), System.TimeSpan.TicksPerSecond);
             *(long*)(self + 0x30) = nowTicks + scaled;
             _scaledPlants.Add(self);
 
-            Log($"[Colony] PlantEntry({personnel}): {TS(remainTicks)} -> {TS(scaled)} (/{mult})");
+            Log($"[Colony] PlantEntry({personnel}): {TS(remainTicks)} -> {TS(scaled)} (/{m})");
         }
         catch
         {
             _inPlantEntry = false;
-            try { _plantEntryHook.Trampoline(self, personnel, mi); } catch { }
+            if (!trampolineCalled)
+                try { _plantEntryHook.Trampoline(self, personnel, mi); } catch { }
         }
     }
 
