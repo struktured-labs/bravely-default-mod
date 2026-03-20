@@ -40,8 +40,15 @@ public static unsafe class NativeAutoLootPatch
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void d_SetGameFlag(int flagIndex, byte value, nint methodInfo);
 
+    // MB_MapName.CheckMap(this) -> bool — shows area name popup on entry
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate byte d_CheckMap(nint instance, nint methodInfo);
+
     private static NativeHook<d_SceneChange> _sceneChangeHook;
     private static d_SceneChange _pinnedSceneChange;
+
+    private static NativeHook<d_CheckMap> _checkMapHook;
+    private static d_CheckMap _pinnedCheckMap;
 
     private static d_AddItem _addItem;
     private static nint _addItem_mi;
@@ -53,6 +60,8 @@ public static unsafe class NativeAutoLootPatch
     private static nint _getGameData_mi;
 
     private static readonly HashSet<string> _lootedAreas = new();
+    private static string _pendingLootMessage;
+    private static int _pendingLootFrames; // countdown frames to show the message
     private static int _logCount;
     private const int MaxLogs = 30;
 
@@ -151,6 +160,28 @@ public static unsafe class NativeAutoLootPatch
         }
         catch (System.Exception ex) { Warn($"SceneChange hook failed: {ex.Message}"); }
 
+        // Hook MB_MapName.CheckMap to append loot notification to area name popup
+        try
+        {
+            var mapNameType = typeof(Il2Cpp.MB_MapName);
+            var cmField = mapNameType.GetField("NativeMethodInfoPtr_CheckMap_Public_Boolean_0",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            if (cmField != null)
+            {
+                var cmMi = (nint)cmField.GetValue(null);
+                if (cmMi != 0)
+                {
+                    var cmNative = *(nint*)cmMi;
+                    _pinnedCheckMap = CheckMap_Hook;
+                    _checkMapHook = new NativeHook<d_CheckMap>(cmNative,
+                        Marshal.GetFunctionPointerForDelegate(_pinnedCheckMap));
+                    _checkMapHook.Attach();
+                    Log($"MB_MapName.CheckMap hooked @ 0x{cmNative:X}");
+                }
+            }
+        }
+        catch (System.Exception ex) { Log($"CheckMap hook failed: {ex.Message}"); }
+
         Log($"Auto-loot ready ({_treasures.Count} areas)");
     }
 
@@ -223,6 +254,14 @@ public static unsafe class NativeAutoLootPatch
             }
 
             _lootedAreas.Add(area);
+
+            // Set pending message for map name popup (allow ~120 frames for CheckMap to pick it up)
+            string msg = gilTotal > 0
+                ? $"Looted {itemCount} items + {gilTotal} PQ!"
+                : $"Looted {itemCount} items!";
+            _pendingLootMessage = msg;
+            _pendingLootFrames = 120;
+
             _logCount++;
             if (_logCount <= MaxLogs)
                 Log($"Looted {area}: {itemCount} items, {gilTotal} PQ, {flagsSet} chests opened (scene: {sceneName})");
@@ -232,6 +271,57 @@ public static unsafe class NativeAutoLootPatch
             _logCount++;
             if (_logCount <= 5) Warn($"Auto-loot error: {ex.Message}");
         }
+    }
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void d_SetText(nint instance, nint text, nint methodInfo);
+
+    private static byte CheckMap_Hook(nint instance, nint methodInfo)
+    {
+        byte result = 0;
+        try { result = _checkMapHook.Trampoline(instance, methodInfo); } catch { return 0; }
+
+        // Decrement frame counter; apply text when CheckMap fires with a pending message
+        if (_pendingLootMessage != null && _pendingLootFrames > 0)
+        {
+            _pendingLootFrames--;
+
+            // Only apply when CheckMap returns true (map name popup is showing)
+            if (result != 0)
+            {
+                try
+                {
+                    nint unit = *(nint*)(instance + 0x20);
+                    if (unit != 0)
+                    {
+                        nint vtable = *(nint*)unit;
+                        nint fn = *(nint*)(vtable + 0x558);
+                        nint mi = *(nint*)(vtable + 0x560);
+                        if (fn != 0)
+                        {
+                            nint str = Il2CppInterop.Runtime.IL2CPP.ManagedStringToIl2Cpp(_pendingLootMessage);
+                            var setText = Marshal.GetDelegateForFunctionPointer<d_SetText>(fn);
+                            setText(unit, str, mi);
+                            Log($"Notification shown: {_pendingLootMessage}");
+                        }
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    _logCount++;
+                    if (_logCount <= 5) Log($"CheckMap text failed: {ex.Message}");
+                }
+                _pendingLootMessage = null;
+                _pendingLootFrames = 0;
+            }
+        }
+        else if (_pendingLootFrames <= 0 && _pendingLootMessage != null)
+        {
+            Log($"Notification expired (CheckMap didn't fire in time): {_pendingLootMessage}");
+            _pendingLootMessage = null;
+        }
+
+        return result;
     }
 
     private static string ExtractAreaPrefix(string sceneName)
