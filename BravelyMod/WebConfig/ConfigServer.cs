@@ -3088,6 +3088,12 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                         {Checkbox("CustomBattleMusicEnabled", Core.CustomBattleMusicEnabled.Value, "Replace Battle BGM with Custom Music")}
                     </div>
 
+                    <!-- Auto-Loot -->
+                    <div class=""settings-group"">
+                        <div class=""settings-group-title"">Auto-Loot</div>
+                        {Checkbox("AutoLootEnabled", Core.AutoLootEnabled.Value, "Auto-collect all area treasures on entry", "Items added to inventory when entering any area")}
+                    </div>
+
                 </div>
 
                 <div class=""btn-row settings-actions"">
@@ -3204,6 +3210,8 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
             SetFloat(Core.WalkSpeedMultiplier, ReadFloat("WalkSpeedMultiplier", Core.WalkSpeedMultiplier.Value), "Walk Speed Multiplier");
 
             SetBool(Core.CustomBattleMusicEnabled, ReadBool("CustomBattleMusicEnabled"), "Custom Battle Music", requiresRestart: true);
+
+            SetBool(Core.AutoLootEnabled, ReadBool("AutoLootEnabled"), "Auto-Loot");
 
             // Save to disk
             Core.Config.SaveToFile(false);

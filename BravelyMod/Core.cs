@@ -49,6 +49,9 @@ public class Core : MelonMod
     // Custom battle music
     public static MelonPreferences_Entry<bool> CustomBattleMusicEnabled { get; private set; }
 
+    // Auto-loot
+    public static MelonPreferences_Entry<bool> AutoLootEnabled { get; private set; }
+
     // Monster/Boss stat scaling
     public static MelonPreferences_Entry<bool> MonsterScalingEnabled { get; private set; }
     public static MelonPreferences_Entry<float> MonsterHpMult { get; private set; }
@@ -108,6 +111,8 @@ public class Core : MelonMod
 
         CustomBattleMusicEnabled = Config.CreateEntry("CustomBattleMusicEnabled", true, "Replace normal battle BGM with custom music");
 
+        AutoLootEnabled = Config.CreateEntry("AutoLootEnabled", false, "Auto-loot all treasures when entering an area");
+
         MonsterScalingEnabled = Config.CreateEntry("MonsterScalingEnabled", false, "Enable monster/boss stat scaling");
         MonsterHpMult = Config.CreateEntry("MonsterHpMult", 1.0f, "Monster HP multiplier");
         MonsterAtkMult = Config.CreateEntry("MonsterAtkMult", 1.0f, "Monster ATK/STR multiplier");
@@ -159,6 +164,7 @@ public class Core : MelonMod
         if (CustomBattleMusicEnabled.Value)
             Patches.NativeMusicPatch.Apply();
         Patches.NativeMonsterScalingPatch.Apply();
+        Patches.NativeAutoLootPatch.Apply();
 
         // Harmony patches (registered but may not intercept on Unity 6 — keeping for future compat)
         _harmony = new HarmonyLib.Harmony("com.struktured.bravelymod");
