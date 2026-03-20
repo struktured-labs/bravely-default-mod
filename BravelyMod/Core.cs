@@ -52,6 +52,9 @@ public class Core : MelonMod
     // Auto-loot
     public static MelonPreferences_Entry<bool> AutoLootEnabled { get; private set; }
 
+    // Skip to boss
+    public static MelonPreferences_Entry<bool> SkipToBossEnabled { get; private set; }
+
     // Monster/Boss stat scaling
     public static MelonPreferences_Entry<bool> MonsterScalingEnabled { get; private set; }
     public static MelonPreferences_Entry<float> MonsterHpMult { get; private set; }
@@ -113,6 +116,8 @@ public class Core : MelonMod
 
         AutoLootEnabled = Config.CreateEntry("AutoLootEnabled", false, "Auto-loot all treasures when entering an area");
 
+        SkipToBossEnabled = Config.CreateEntry("SkipToBossEnabled", false, "Skip to boss room when entering dungeons");
+
         MonsterScalingEnabled = Config.CreateEntry("MonsterScalingEnabled", false, "Enable monster/boss stat scaling");
         MonsterHpMult = Config.CreateEntry("MonsterHpMult", 1.0f, "Monster HP multiplier");
         MonsterAtkMult = Config.CreateEntry("MonsterAtkMult", 1.0f, "Monster ATK/STR multiplier");
@@ -165,6 +170,7 @@ public class Core : MelonMod
             Patches.NativeMusicPatch.Apply();
         Patches.NativeMonsterScalingPatch.Apply();
         Patches.NativeAutoLootPatch.Apply();
+        Patches.NativeSkipToBossPatch.Apply();
 
         // Harmony patches (registered but may not intercept on Unity 6 — keeping for future compat)
         _harmony = new HarmonyLib.Harmony("com.struktured.bravelymod");

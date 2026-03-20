@@ -3094,6 +3094,12 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
                         {Checkbox("AutoLootEnabled", Core.AutoLootEnabled.Value, "Auto-collect all area treasures on entry", "Items added to inventory when entering any area")}
                     </div>
 
+                    <!-- Skip to Boss -->
+                    <div class=""settings-group"">
+                        <div class=""settings-group-title"">Skip to Boss</div>
+                        {Checkbox("SkipToBossEnabled", Core.SkipToBossEnabled.Value, "Warp to boss room on dungeon entry", "Suppresses random encounters while active")}
+                    </div>
+
                 </div>
 
                 <div class=""btn-row settings-actions"">
@@ -3212,6 +3218,8 @@ HP &lt; 50% &#8594; Cure Ally, Atk Strong x2</pre>
             SetBool(Core.CustomBattleMusicEnabled, ReadBool("CustomBattleMusicEnabled"), "Custom Battle Music", requiresRestart: true);
 
             SetBool(Core.AutoLootEnabled, ReadBool("AutoLootEnabled"), "Auto-Loot");
+
+            SetBool(Core.SkipToBossEnabled, ReadBool("SkipToBossEnabled"), "Skip to Boss");
 
             // Save to disk
             Core.Config.SaveToFile(false);
