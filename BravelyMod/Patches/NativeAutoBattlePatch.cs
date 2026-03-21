@@ -412,10 +412,9 @@ public static unsafe class NativeAutoBattlePatch
                 var actions = _ruleEngine.EvaluateForCharacter(i, battle);
                 if (actions == null || actions.Count == 0) continue;
 
-                // Map player index to recorder array index
-                int charaId = player.Index; // 0, 100, 200, 300
-                int arrayIdx = charaId switch { 0 => 0, 100 => 1, 200 => 2, 300 => 3, _ => -1 };
-                if (arrayIdx < 0) continue;
+                // player.Index IS the array index (0-3 for players)
+                int arrayIdx = player.Index;
+                if (arrayIdx < 0 || arrayIdx >= 4) continue;
 
                 // Get the STLVector for this character from recorder+0x20
                 nint vectorArray = *(nint*)(recorder + OFF_RECORDER_VECTORS);
