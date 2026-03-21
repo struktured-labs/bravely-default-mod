@@ -58,6 +58,41 @@ public static unsafe class NativeAutoBattlePatch
     private static d_GetGameData _getGameData;
     private static nint _getGameData_mi;
 
+    // CanAutoPlay hook — bypass empty-tactic check so our rules can fire
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate byte d_CanAutoPlay(int playingCommand, nint methodInfo);
+
+    private static NativeHook<d_CanAutoPlay> _canAutoPlayHook;
+    private static d_CanAutoPlay _pinnedCanAutoPlay;
+
+    // TacticsNameListImpl.get_Item hook — show our profile names
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate nint d_GetTacticsName(nint instance, int index, nint methodInfo);
+
+    private static NativeHook<d_GetTacticsName> _getTacticsNameHook;
+    private static d_GetTacticsName _pinnedGetTacticsName;
+
+    // SetAutoPanel hook — show rule descriptions as command plates
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void d_SetAutoPanel(nint instance, int panelIndex, nint methodInfo);
+
+    private static NativeHook<d_SetAutoPanel> _setAutoPanelHook;
+    private static d_SetAutoPanel _pinnedSetAutoPanel;
+
+    // AutoWindowAddCommandPlate(instance, charaIdx, abilityName, iconName, isValid, methodInfo)
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void d_AddCommandPlate(nint instance, int charaIdx, nint abilityName, nint iconName, byte isValid, nint methodInfo);
+
+    private static d_AddCommandPlate _addCommandPlate;
+    private static nint _addCommandPlate_mi;
+
+    // AutoPanelClear(instance, methodInfo)
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void d_AutoPanelClear(nint instance, nint methodInfo);
+
+    private static d_AutoPanelClear _autoPanelClear;
+    private static nint _autoPanelClear_mi;
+
     // STLVector<CommandInfo> method info pointers (for clear/push_back)
     private static nint _vectorClearMi;
     private static nint _vectorPushBackMi;
@@ -157,6 +192,87 @@ public static unsafe class NativeAutoBattlePatch
         // Resolve STLVector<CommandInfo> clear/push_back method infos
         // These are referenced by BackupCommand. We resolve them from the CppUtil type.
         ResolveCppUtilVectorMethods();
+
+        // Hook CanAutoPlay — bypass empty tactic check so our rules fire
+        try
+        {
+            var canAutoField = typeof(Il2Cpp.BtlGUIAutoWindow).GetField(
+                "NativeMethodInfoPtr_CanAutoPlay_Public_Static_Boolean_Int32_0",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            if (canAutoField != null)
+            {
+                var canAutoMi = (nint)canAutoField.GetValue(null);
+                if (canAutoMi != 0)
+                {
+                    var canAutoNative = *(nint*)canAutoMi;
+                    _pinnedCanAutoPlay = CanAutoPlay_Hook;
+                    _canAutoPlayHook = new NativeHook<d_CanAutoPlay>(canAutoNative,
+                        Marshal.GetFunctionPointerForDelegate(_pinnedCanAutoPlay));
+                    _canAutoPlayHook.Attach();
+                    Log($"CanAutoPlay hooked @ 0x{canAutoNative:X}");
+                }
+            }
+            else Log("CanAutoPlay field not found");
+        }
+        catch (System.Exception ex) { Log($"CanAutoPlay hook failed: {ex.Message}"); }
+
+        // Hook TacticsNameListImpl.get_Item — show profile names in tactics UI
+        try
+        {
+            var nameType = typeof(Il2Cpp.BtlCommandRecorder).GetNestedType("TacticsNameListImpl");
+            if (nameType != null)
+            {
+                var nameField = nameType.GetField(
+                    "NativeMethodInfoPtr_get_Item_Public_String_Int32_0",
+                    System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+                if (nameField != null)
+                {
+                    var nameMi = (nint)nameField.GetValue(null);
+                    if (nameMi != 0)
+                    {
+                        var nameNative = *(nint*)nameMi;
+                        _pinnedGetTacticsName = GetTacticsName_Hook;
+                        _getTacticsNameHook = new NativeHook<d_GetTacticsName>(nameNative,
+                            Marshal.GetFunctionPointerForDelegate(_pinnedGetTacticsName));
+                        _getTacticsNameHook.Attach();
+                        Log($"TacticsNameList.get_Item hooked @ 0x{nameNative:X}");
+                    }
+                }
+            }
+            else Log("TacticsNameListImpl type not found");
+        }
+        catch (System.Exception ex) { Log($"TacticsName hook failed: {ex.Message}"); }
+
+        // Hook SetAutoPanel — replace command plates with rule descriptions
+        try
+        {
+            ResolveMethod(typeof(Il2Cpp.BtlGUIAutoWindow),
+                "NativeMethodInfoPtr_SetAutoPanel_Public_Void_Int32_0",
+                out var sapPtr, out var sapMi, "SetAutoPanel");
+            if (sapPtr != 0)
+            {
+                _pinnedSetAutoPanel = SetAutoPanel_Hook;
+                _setAutoPanelHook = new NativeHook<d_SetAutoPanel>(sapPtr,
+                    Marshal.GetFunctionPointerForDelegate(_pinnedSetAutoPanel));
+                _setAutoPanelHook.Attach();
+                Log($"SetAutoPanel hooked @ 0x{sapPtr:X}");
+            }
+        }
+        catch (System.Exception ex) { Log($"SetAutoPanel hook failed: {ex.Message}"); }
+
+        // Resolve AutoWindowAddCommandPlate (5-arg overload with string name + icon)
+        ResolveMethod(typeof(Il2Cpp.BtlGUIAutoWindow),
+            "NativeMethodInfoPtr_AutoWindowAddCommandPlate_Public_Void_Int32_String_String_Boolean_0",
+            out var acpPtr, out _addCommandPlate_mi, "AddCommandPlate");
+        if (acpPtr != 0)
+            _addCommandPlate = Marshal.GetDelegateForFunctionPointer<d_AddCommandPlate>(acpPtr);
+
+        // Resolve AutoPanelClear
+        ResolveMethod(typeof(Il2Cpp.BtlGUIAutoWindow),
+            "NativeMethodInfoPtr_AutoPanelClear_Public_Void_0",
+            out var apcPtr, out _autoPanelClear_mi, "AutoPanelClear");
+        if (apcPtr != 0)
+            _autoPanelClear = Marshal.GetDelegateForFunctionPointer<d_AutoPanelClear>(apcPtr);
 
         Log("AutoBattle (Approach A) ready");
     }
@@ -459,6 +575,102 @@ public static unsafe class NativeAutoBattlePatch
             Log($"{label} resolved @ 0x{funcPtr:X}");
         }
         catch (System.Exception ex) { Log($"{label}: {ex.Message}"); }
+    }
+
+    // ── SetAutoPanel hook — show rules as command plates ────────────
+
+    private static void SetAutoPanel_Hook(nint instance, int panelIndex, nint methodInfo)
+    {
+        // Try to show our rules; fall back to original if anything fails
+        if (_addCommandPlate == null || _autoPanelClear == null)
+        {
+            try { _setAutoPanelHook.Trampoline(instance, panelIndex, methodInfo); } catch { }
+            return;
+        }
+
+        try
+        {
+            // Store the panel index on the instance (+0xC0)
+            *(int*)(instance + 0xC0) = panelIndex;
+
+            // Clear existing plates
+            _autoPanelClear(instance, _autoPanelClear_mi);
+
+            // Determine which profile to show
+            // panelIndex: -1 = repeat/active profile, 0-3 = tactic slots
+            int profileIdx = panelIndex < 0 ? _ruleEngine.ActiveProfileIndex : panelIndex;
+
+            RuleProfile profile = null;
+            if (profileIdx >= 0 && profileIdx < _ruleEngine.ProfileNames.Count)
+            {
+                string name = _ruleEngine.ProfileNames[profileIdx];
+                _ruleEngine.AllProfiles.TryGetValue(name, out profile);
+            }
+            profile ??= _ruleEngine.DefaultProfile;
+
+            if (profile == null || profile.Rules.Count == 0)
+            {
+                // Show "No rules" for empty profiles
+                nint emptyStr = Il2CppInterop.Runtime.IL2CPP.ManagedStringToIl2Cpp("(no rules)");
+                nint iconStr = Il2CppInterop.Runtime.IL2CPP.ManagedStringToIl2Cpp("");
+                for (int c = 0; c < 4; c++)
+                    _addCommandPlate(instance, c, emptyStr, iconStr, 1, _addCommandPlate_mi);
+                return;
+            }
+
+            // Show up to 4 rules as plates (one per character row)
+            int ruleCount = System.Math.Min(profile.Rules.Count, 4);
+            for (int i = 0; i < ruleCount; i++)
+            {
+                string ruleText = profile.Rules[i].ToShortString();
+                nint nameStr = Il2CppInterop.Runtime.IL2CPP.ManagedStringToIl2Cpp(ruleText);
+                nint iconStr = Il2CppInterop.Runtime.IL2CPP.ManagedStringToIl2Cpp("");
+                _addCommandPlate(instance, i, nameStr, iconStr, 1, _addCommandPlate_mi);
+            }
+
+            _logCount++;
+            if (_logCount <= MaxLogs)
+                Log($"SetAutoPanel({panelIndex}): showing {ruleCount} rules from '{profile.Name}'");
+        }
+        catch (System.Exception ex)
+        {
+            _logCount++;
+            if (_logCount <= 5) Log($"SetAutoPanel error: {ex.Message}");
+            // Fall back to original
+            try { _setAutoPanelHook.Trampoline(instance, panelIndex, methodInfo); } catch { }
+        }
+    }
+
+    // ── CanAutoPlay hook — always return true so ProcessAutoBattle fires ──
+
+    private static byte CanAutoPlay_Hook(int playingCommand, nint methodInfo)
+    {
+        // Always return true — our ProcessAutoBattle hook handles the logic
+        // The original checks if recorded commands are still valid, but we
+        // inject our own commands so it doesn't matter
+        _logCount++;
+        if (_logCount <= MaxLogs) Log($"CanAutoPlay({playingCommand}) -> true (forced)");
+        return 1;
+    }
+
+    // ── TacticsNameList hook — show profile names in tactics UI ──────
+
+    private static nint GetTacticsName_Hook(nint instance, int index, nint methodInfo)
+    {
+        try
+        {
+            // Map tactic index to our profile names
+            if (index >= 0 && index < _ruleEngine.ProfileNames.Count)
+            {
+                string name = _ruleEngine.ProfileNames[index];
+                return Il2CppInterop.Runtime.IL2CPP.ManagedStringToIl2Cpp(name);
+            }
+        }
+        catch { }
+
+        // Fall back to original
+        try { return _getTacticsNameHook.Trampoline(instance, index, methodInfo); }
+        catch { return 0; }
     }
 
     private static void Log(string msg) => Melon<Core>.Logger.Msg($"[AutoBattle] {msg}");
