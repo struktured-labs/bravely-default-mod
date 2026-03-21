@@ -149,8 +149,8 @@ public class Core : MelonMod
         Patches.NativeBuffPatch.Apply();
         if (WalkSpeedModEnabled.Value)
             Patches.NativeSpeedWalkPatch.Apply();
-        // Autobattle disabled — sends wrong commands, causes -99 BP and UI corruption
-        // Patches.NativeAutoBattlePatch.Apply();
+        // Autobattle (Approach A: inject into repeat storage, PlaybackRecords handles BP)
+        Patches.NativeAutoBattlePatch.Apply();
         // Patches.NativeTacticsMenuPatch.Apply();
         Patches.NativeJobSwapPatch.Apply();
         Patches.NativeBraveSubmenuPatch.Apply();

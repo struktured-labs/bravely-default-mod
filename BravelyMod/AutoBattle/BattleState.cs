@@ -34,11 +34,17 @@ public static unsafe class BattleState
     // Confirmed by Ghidra: GetParameter() returns *(param_1 + 0x108)
     private const int OFF_CHARA_PARAM = 0x108;
 
+    // BtlChara.m_bp -> BP object (class reference at 0x140, BP value at +0x18)
+    private const int OFF_CHARA_BP = 0x140;
+
     // BtlChara.m_ap -> BtlActionPoint (class reference at 0x148)
     private const int OFF_CHARA_AP = 0x148;
 
     // BtlChara.m_pStatusManager -> BtlStatusManager (class reference at 0x150)
     private const int OFF_CHARA_STATUS_MGR = 0x150;
+
+    // BP value offset within the BP object
+    private const int OFF_BP_VALUE = 0x18;
 
     // BtlActionPoint.m_ap (int at 0x10)
     private const int OFF_AP_VALUE = 0x10;
@@ -153,13 +159,14 @@ public static unsafe class BattleState
                     return null;
             }
 
-            // Read BP from BtlActionPoint
+            // Read BP (Brave Points, not Action Points)
+            // BP is at BtlChara+0x140 -> +0x18 (confirmed by BtlChara::GetBP decompile)
+            // AP (action point) at +0x148 is a binary 0/1 flag, NOT BP
             int bp = 0;
-            nint apPtr = *(nint*)(charaPtr + OFF_CHARA_AP);
-            if (apPtr != 0 && *(nint*)apPtr != 0)
+            nint bpObj = *(nint*)(charaPtr + OFF_CHARA_BP);
+            if (bpObj != 0 && *(nint*)bpObj != 0)
             {
-                bp = *(int*)(apPtr + OFF_AP_VALUE);
-                // BP in Bravely Default ranges from -4 to +4 typically
+                bp = *(int*)(bpObj + OFF_BP_VALUE);
                 if (bp < -10 || bp > 10) bp = 0;
             }
 

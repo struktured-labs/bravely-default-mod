@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using MelonLoader;
 using MelonLoader.NativeUtils;
@@ -8,28 +9,24 @@ using Il2CppInterop.Runtime;
 namespace BravelyMod.Patches;
 
 /// <summary>
-/// Native hook on BtlLayoutCtrl.ProcessAutoBattle.
-/// Replaces the simple record-playback with the conditional rule engine.
-/// Supports Attack, Ability/Magic, Guard, and Item commands via SendCommand.
-/// Falls back to original behavior if rule evaluation fails.
+/// Autobattle with conditional rules (Approach A: inject into repeat storage).
+///
+/// Instead of calling SendCommand/AddAttackCommand directly (which caused -99 BP),
+/// we write CommandInfo objects into BtlCommandRecorder's repeat storage vectors,
+/// then call the original ProcessAutoBattle trampoline. PlaybackRecords handles
+/// ALL BP/AP accounting, cost calculation, target validation, and UI updates.
+///
+/// Flow:
+///   1. Evaluate RuleEngine for each character
+///   2. Clear repeat storage vectors for each character
+///   3. Push our CommandInfo objects into the vectors
+///   4. Call original ProcessAutoBattle (which calls PlaybackRecords → EndWaitTurnPhase)
 /// </summary>
 public static unsafe class NativeAutoBattlePatch
 {
     // void ProcessAutoBattle(BtlLayoutCtrl* this, int commandIndex, MethodInfo*)
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void d_ProcessAutoBattle(nint instance, int commandIndex, nint methodInfo);
-
-    // void AddAttackCommand(BtlCommandRecorder* this, BtlLayoutCtrl* layout, int charaIndex, int targetIndex, bool isTargetEnemy, MethodInfo*)
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    private delegate void d_AddAttackCommand(nint recorderThis, nint btlLayoutCtrl, int charaIndex, int targetIndex, byte isTargetEnemy, nint methodInfo);
-
-    // void SendCommand(BtlCommandRecorder* this, BtlLayoutCtrl* layout, int charaIndex, CommandInfo* command, bool IsRemoveBp, bool ChangeSerial, MethodInfo*)
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    private delegate void d_SendCommand(nint recorderThis, nint btlLayoutCtrl, int charaIndex, nint commandInfo, byte isRemoveBp, byte changeSerial, nint methodInfo);
-
-    // Hikari* get_GameData(MethodInfo*) — static, returns GameData singleton
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    private delegate nint d_GetGameData(nint methodInfo);
 
     // void CommandInfo..ctor(CommandInfo* this, MethodInfo*)
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -39,383 +36,223 @@ public static unsafe class NativeAutoBattlePatch
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void d_CommandInfoClear(nint thisPtr, nint methodInfo);
 
+    // nint Hikari.GetGameData(MethodInfo*) — static
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate nint d_GetGameData(nint methodInfo);
+
+    // void STLVector.clear(nint vector, nint methodInfo)
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void d_VectorClear(nint vector, nint methodInfo);
+
+    // void STLVector.push_back(nint vector, nint item, nint methodInfo)
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void d_VectorPushBack(nint vector, nint item, nint methodInfo);
+
     private static NativeHook<d_ProcessAutoBattle> _processHook;
     private static d_ProcessAutoBattle _pinnedProcess;
 
-    // Cached function pointer for AddAttackCommand (instance method on BtlCommandRecorder)
-    private static nint _addAttackCommandPtr;
-    private static nint _addAttackCommandMethodInfo;
-
-    // Cached function pointer for SendCommand (instance method on BtlCommandRecorder)
-    private static nint _sendCommandPtr;
-    private static nint _sendCommandMethodInfo;
-
-    // Cached function pointer for Hikari.get_GameData (static)
-    private static nint _getGameDataPtr;
-    private static nint _getGameDataMethodInfo;
-
-    // Cached function pointer for CommandInfo..ctor (instance)
-    private static nint _commandInfoCtorPtr;
-    private static nint _commandInfoCtorMethodInfo;
-
-    // Cached function pointer for CommandInfo.Clear (instance)
-    private static nint _commandInfoClearPtr;
-    private static nint _commandInfoClearMethodInfo;
-
-    // IL2CPP class pointer for CommandInfo (for object allocation)
+    private static nint _commandInfoCtorPtr, _commandInfoCtorMi;
+    private static nint _commandInfoClearPtr, _commandInfoClearMi;
     private static nint _commandInfoClass;
 
-    // ── CommandInfo field offsets (from il2cpp dump) ──────────────
-    private const int OFF_CMD_OWNERINDEX     = 0x10;
-    private const int OFF_CMD_CHARAIDX       = 0x14;
-    private const int OFF_CMD_SERIALNUMBER   = 0x18;
-    private const int OFF_CMD_APTYPE         = 0x1C;
-    private const int OFF_CMD_COMMANDTYPE    = 0x28;
-    private const int OFF_CMD_COMMANDSUBTYPE = 0x2C;
-    private const int OFF_CMD_COMMANDSUBINDEX = 0x30;
-    private const int OFF_CMD_TARGETTYPE     = 0x34;
-    private const int OFF_CMD_TARGETIDXLIST  = 0x38;
-    private const int OFF_CMD_APCOST         = 0x60;
-    private const int OFF_CMD_ISTARGETENEMY  = 0x68;
+    private static d_GetGameData _getGameData;
+    private static nint _getGameData_mi;
 
-    // ── BtlCommandManager command type constants ─────────────────
-    private const int COMMAND_TYPE_NONE    = 0;
-    private const int COMMAND_TYPE_FIGHT   = 1;
-    private const int COMMAND_TYPE_MAGIC   = 2;
-    private const int COMMAND_TYPE_ABILITY = 3;
-    private const int COMMAND_TYPE_ITEM    = 4;
-    private const int COMMAND_TYPE_GUARD   = 5;
+    // STLVector<CommandInfo> method info pointers (for clear/push_back)
+    private static nint _vectorClearMi;
+    private static nint _vectorPushBackMi;
+    private static d_VectorClear _vectorClear;
+    private static d_VectorPushBack _vectorPushBack;
 
-    // ── BTLDEF.CommandTargetType ─────────────────────────────────
-    private const int CMD_TARGET_ENEMY      = 0;
-    private const int CMD_TARGET_FRIEND     = 1;
-    private const int CMD_TARGET_ENEMY_ALL  = 2;
-    private const int CMD_TARGET_FRIEND_ALL = 3;
+    // CommandInfo field offsets
+    private const int OFF_OWNER_INDEX = 0x10;
+    private const int OFF_CHARA_IDX = 0x14;
+    private const int OFF_COMMAND_TYPE = 0x28;
+    private const int OFF_COMMAND_SUB_TYPE = 0x2C;
+    private const int OFF_TARGET_TYPE = 0x34;
+    private const int OFF_TARGET_IDX_LIST = 0x38;
+    private const int OFF_AP_COST = 0x60;
+    private const int OFF_IS_TARGET_ENEMY = 0x68;
 
-    // ── GameData -> BtlCommandRecorder offset ────────────────────
-    private const int OFF_GAMEDATA_RECORDER = 0xE8;
+    // Command types
+    private const int CMD_FIGHT = 1;
+    private const int CMD_MAGIC = 2;
+    private const int CMD_ABILITY = 3;
+    private const int CMD_ITEM = 4;
+    private const int CMD_GUARD = 5;
 
-    // ── BtlCharaIdxList field offsets ────────────────────────────
-    private const int OFF_IDXLIST_ARRAY = 0x10;
-    private const int OFF_IDXLIST_NUM   = 0x18;
-    private const int OFF_ARRAY_DATA    = 0x20;
+    // BtlCommandRecorder offsets
+    private const int OFF_RECORDER_VECTORS = 0x20; // managed array of STLVector<CommandInfo>
+    private const int OFF_RECORDER_FLAGS = 0x28;    // managed byte[] flags
+    private const int OFF_RECORDER_MODE = 0x34;     // int: -1=repeat, >=0=recorded set index
+
+    // RVAs
+    private const long RVA_GET_GAME_DATA = 0x45B500;
+    private const long RVA_VECTOR_CLEAR = 0; // resolved from BackupCommand's method refs
+    private const long RVA_VECTOR_PUSH_BACK = 0;
 
     private static readonly RuleEngine _ruleEngine = new();
+    private static int _logCount;
+    private const int MaxLogs = 40;
 
-    private static int _logCount = 0;
-    private const int MaxLogLines = 40;
-
-    /// <summary>
-    /// Config file location — next to MelonPreferences.cfg in UserData/.
-    /// </summary>
     public static string ConfigPath =>
-        Path.Combine(MelonEnvironment.UserDataDirectory, "BravelyMod_AutoBattle.yaml");
+        System.IO.Path.Combine(MelonEnvironment.UserDataDirectory, "BravelyMod_AutoBattle.yaml");
 
-    /// <summary>
-    /// Access the rule engine for external configuration.
-    /// </summary>
     public static RuleEngine RuleEngine => _ruleEngine;
 
     public static void Apply()
     {
-        // Load profiles from config (creates default file if missing)
         ProfileConfig.LoadInto(ConfigPath, _ruleEngine);
 
-        HookProcessAutoBattle();
-        ResolveAddAttackCommand();
-        ResolveSendCommand();
-        ResolveCommandInfoHelpers();
-        ResolveGetGameData();
-    }
-
-    // ── Hook setup ───────────────────────────────────────────────
-
-    private static void HookProcessAutoBattle()
-    {
+        // Hook ProcessAutoBattle
         try
         {
             var field = typeof(Il2Cpp.BtlLayoutCtrl).GetField(
                 "NativeMethodInfoPtr_ProcessAutoBattle_Public_Void_Int32_0",
                 System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
-            if (field == null)
-            {
-                Melon<Core>.Logger.Warning("[AutoBattle] ProcessAutoBattle field not found");
-                return;
-            }
-
+            if (field == null) { Warn("ProcessAutoBattle field not found"); return; }
             var mi = (nint)field.GetValue(null);
-            if (mi == 0)
-            {
-                Melon<Core>.Logger.Warning("[AutoBattle] ProcessAutoBattle method info ptr is null");
-                return;
-            }
-
+            if (mi == 0) { Warn("ProcessAutoBattle MI null"); return; }
             var native = *(nint*)mi;
-            Melon<Core>.Logger.Msg($"[AutoBattle] ProcessAutoBattle native @ 0x{native:X}");
-
             _pinnedProcess = ProcessAutoBattle_Hook;
-            var hookPtr = Marshal.GetFunctionPointerForDelegate(_pinnedProcess);
-            _processHook = new NativeHook<d_ProcessAutoBattle>(native, hookPtr);
+            _processHook = new NativeHook<d_ProcessAutoBattle>(native,
+                Marshal.GetFunctionPointerForDelegate(_pinnedProcess));
             _processHook.Attach();
-            Melon<Core>.Logger.Msg("[AutoBattle] ProcessAutoBattle hook attached!");
+            Log($"ProcessAutoBattle hooked @ 0x{native:X}");
         }
-        catch (System.Exception ex)
-        {
-            Melon<Core>.Logger.Warning($"[AutoBattle] ProcessAutoBattle hook failed: {ex.Message}");
-        }
-    }
+        catch (System.Exception ex) { Warn($"Hook failed: {ex.Message}"); return; }
 
-    private static void ResolveAddAttackCommand()
-    {
-        ResolveNativeMethod(
-            typeof(Il2Cpp.BtlCommandRecorder),
-            "NativeMethodInfoPtr_AddAttackCommand_Public_Void_BtlLayoutCtrl_Int32_Int32_Boolean_0",
-            "AddAttackCommand",
-            out _addAttackCommandPtr, out _addAttackCommandMethodInfo);
-    }
-
-    private static void ResolveSendCommand()
-    {
-        ResolveNativeMethod(
-            typeof(Il2Cpp.BtlCommandRecorder),
-            "NativeMethodInfoPtr_SendCommand_Public_Void_BtlLayoutCtrl_Int32_CommandInfo_Boolean_Boolean_0",
-            "SendCommand",
-            out _sendCommandPtr, out _sendCommandMethodInfo);
-    }
-
-    private static void ResolveCommandInfoHelpers()
-    {
-        // Resolve CommandInfo default .ctor
-        ResolveNativeMethod(
-            typeof(Il2Cpp.BtlCommandManager.CommandInfo),
+        // Resolve CommandInfo helpers
+        ResolveMethod(typeof(Il2Cpp.BtlCommandManager.CommandInfo),
             "NativeMethodInfoPtr__ctor_Public_Void_0",
-            "CommandInfo.ctor",
-            out _commandInfoCtorPtr, out _commandInfoCtorMethodInfo);
-
-        // Resolve CommandInfo.Clear
-        ResolveNativeMethod(
-            typeof(Il2Cpp.BtlCommandManager.CommandInfo),
+            out _commandInfoCtorPtr, out _commandInfoCtorMi, "CommandInfo.ctor");
+        ResolveMethod(typeof(Il2Cpp.BtlCommandManager.CommandInfo),
             "NativeMethodInfoPtr_Clear_Public_Void_0",
-            "CommandInfo.Clear",
-            out _commandInfoClearPtr, out _commandInfoClearMethodInfo);
-
-        // Get the IL2CPP class pointer for CommandInfo (for il2cpp_object_new)
+            out _commandInfoClearPtr, out _commandInfoClearMi, "CommandInfo.Clear");
         try
         {
             _commandInfoClass = Il2CppClassPointerStore<Il2Cpp.BtlCommandManager.CommandInfo>.NativeClassPtr;
-            if (_commandInfoClass != 0)
-                Melon<Core>.Logger.Msg($"[AutoBattle] CommandInfo IL2CPP class @ 0x{_commandInfoClass:X}");
-            else
-                Melon<Core>.Logger.Warning("[AutoBattle] CommandInfo IL2CPP class pointer is null");
+            if (_commandInfoClass != 0) Log($"CommandInfo class @ 0x{_commandInfoClass:X}");
         }
-        catch (System.Exception ex)
-        {
-            Melon<Core>.Logger.Warning($"[AutoBattle] CommandInfo class resolve failed: {ex.Message}");
-        }
-    }
+        catch { }
 
-    private static void ResolveGetGameData()
-    {
-        ResolveNativeMethod(
-            typeof(Il2Cpp.Hikari),
-            "NativeMethodInfoPtr_get_GameData_Public_Static_get_Hikari_0",
-            "Hikari.get_GameData",
-            out _getGameDataPtr, out _getGameDataMethodInfo);
-    }
-
-    /// <summary>
-    /// Helper to resolve a NativeMethodInfoPtr field and extract the native function pointer.
-    /// </summary>
-    private static void ResolveNativeMethod(System.Type type, string fieldName, string label,
-        out nint funcPtr, out nint methodInfoPtr)
-    {
-        funcPtr = 0;
-        methodInfoPtr = 0;
+        // Resolve GetGameData via RVA
         try
         {
-            var field = type.GetField(fieldName,
-                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
-            if (field == null)
+            var proc = System.Diagnostics.Process.GetCurrentProcess();
+            foreach (System.Diagnostics.ProcessModule mod in proc.Modules)
             {
-                Melon<Core>.Logger.Warning($"[AutoBattle] {label}: field '{fieldName}' not found");
+                if (mod.ModuleName != null &&
+                    mod.ModuleName.Equals("GameAssembly.dll", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    _getGameData = Marshal.GetDelegateForFunctionPointer<d_GetGameData>(
+                        mod.BaseAddress + (nint)RVA_GET_GAME_DATA);
+                    Log("GetGameData resolved via RVA");
+                    break;
+                }
+            }
+        }
+        catch (System.Exception ex) { Warn($"GetGameData failed: {ex.Message}"); }
+
+        // Resolve STLVector<CommandInfo> clear/push_back method infos
+        // These are referenced by BackupCommand. We resolve them from the CppUtil type.
+        ResolveCppUtilVectorMethods();
+
+        Log("AutoBattle (Approach A) ready");
+    }
+
+    private static void ResolveCppUtilVectorMethods()
+    {
+        try
+        {
+            // Find CppUtil.STLVector`1 generic type, then make it with CommandInfo
+            var cppUtilType = typeof(Il2Cpp.BtlCommandManager).Assembly.GetType("Il2Cpp.CppUtil");
+            System.Type vecType = null;
+
+            if (cppUtilType != null)
+            {
+                foreach (var nested in cppUtilType.GetNestedTypes(
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic))
+                {
+                    if (nested.Name.StartsWith("STLVector") && nested.IsGenericTypeDefinition)
+                    {
+                        Log($"Found generic: {nested.FullName}");
+                        vecType = nested.MakeGenericType(typeof(Il2Cpp.BtlCommandManager.CommandInfo));
+                        Log($"Instantiated: {vecType.FullName}");
+                        break;
+                    }
+                }
+            }
+
+            if (vecType == null)
+            {
+                Log("STLVector<CommandInfo> type not found");
                 return;
             }
 
-            var mi = (nint)field.GetValue(null);
-            if (mi == 0)
+            // Search ALL fields for clear and push_back NativeMethodInfoPtrs
+            var fields = vecType.GetFields(
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+            foreach (var f in fields)
             {
-                Melon<Core>.Logger.Warning($"[AutoBattle] {label}: method info ptr is null");
-                return;
-            }
-
-            funcPtr = *(nint*)mi;
-            methodInfoPtr = mi;
-            Melon<Core>.Logger.Msg($"[AutoBattle] {label} resolved @ 0x{funcPtr:X}");
-        }
-        catch (System.Exception ex)
-        {
-            Melon<Core>.Logger.Warning($"[AutoBattle] {label} resolve failed: {ex.Message}");
-        }
-    }
-
-    // ── BtlCommandRecorder instance retrieval ────────────────────
-
-    /// <summary>
-    /// Gets the BtlCommandRecorder instance from the GameData singleton.
-    /// Chain: Hikari.get_GameData() -> GameData.m_CommandRecorder (offset 0xE8)
-    /// </summary>
-    private static nint GetCommandRecorder()
-    {
-        if (_getGameDataPtr == 0) return 0;
-
-        try
-        {
-            var fn = (delegate* unmanaged[Cdecl]<nint, nint>)_getGameDataPtr;
-            nint gameData = fn(_getGameDataMethodInfo);
-            if (gameData == 0) return 0;
-
-            nint recorder = *(nint*)(gameData + OFF_GAMEDATA_RECORDER);
-            return recorder;
-        }
-        catch
-        {
-            return 0;
-        }
-    }
-
-    // ── CommandInfo IL2CPP object creation ────────────────────────
-
-    /// <summary>
-    /// Allocate a new CommandInfo IL2CPP object and call its default constructor.
-    /// The constructor initializes sub-objects (BtlCharaIdxList, etc.).
-    /// </summary>
-    private static nint AllocateCommandInfo()
-    {
-        if (_commandInfoClass == 0 || _commandInfoCtorPtr == 0) return 0;
-
-        try
-        {
-            // Allocate the IL2CPP object
-            nint obj = IL2CPP.il2cpp_object_new(_commandInfoClass);
-            if (obj == 0) return 0;
-
-            // Call the default constructor to initialize sub-objects
-            var ctor = (delegate* unmanaged[Cdecl]<nint, nint, void>)_commandInfoCtorPtr;
-            ctor(obj, _commandInfoCtorMethodInfo);
-
-            return obj;
-        }
-        catch (System.Exception ex)
-        {
-            if (_logCount < MaxLogLines)
-            {
-                Melon<Core>.Logger.Warning($"[AutoBattle] CommandInfo allocation failed: {ex.Message}");
-                _logCount++;
-            }
-            return 0;
-        }
-    }
-
-    /// <summary>
-    /// Clear a CommandInfo object (reset all fields to defaults).
-    /// </summary>
-    private static void ClearCommandInfo(nint cmdInfo)
-    {
-        if (cmdInfo == 0 || _commandInfoClearPtr == 0) return;
-
-        var fn = (delegate* unmanaged[Cdecl]<nint, nint, void>)_commandInfoClearPtr;
-        fn(cmdInfo, _commandInfoClearMethodInfo);
-    }
-
-    /// <summary>
-    /// Set up a CommandInfo for an ability/magic command.
-    /// </summary>
-    private static void SetupAbilityCommand(nint cmdInfo, int charaIndex, int commandType,
-        int abilitySubType, int targetIndex, bool isTargetEnemy)
-    {
-        // Clear first to reset all fields
-        ClearCommandInfo(cmdInfo);
-
-        // Set the command fields
-        *(int*)(cmdInfo + OFF_CMD_OWNERINDEX)     = charaIndex;
-        *(int*)(cmdInfo + OFF_CMD_CHARAIDX)       = charaIndex;
-        *(int*)(cmdInfo + OFF_CMD_COMMANDTYPE)    = commandType;
-        *(int*)(cmdInfo + OFF_CMD_COMMANDSUBTYPE) = abilitySubType;
-        *(int*)(cmdInfo + OFF_CMD_COMMANDSUBINDEX) = 0;
-        *(byte*)(cmdInfo + OFF_CMD_ISTARGETENEMY) = isTargetEnemy ? (byte)1 : (byte)0;
-
-        // Set target type based on targeting
-        int targetType = isTargetEnemy ? CMD_TARGET_ENEMY : CMD_TARGET_FRIEND;
-        *(int*)(cmdInfo + OFF_CMD_TARGETTYPE) = targetType;
-
-        // Set the target in the BtlCharaIdxList
-        nint idxList = *(nint*)(cmdInfo + OFF_CMD_TARGETIDXLIST);
-        if (idxList != 0)
-        {
-            // Set num = 1
-            *(int*)(idxList + OFF_IDXLIST_NUM) = 1;
-
-            // Set idxList[0] = targetIndex
-            nint array = *(nint*)(idxList + OFF_IDXLIST_ARRAY);
-            if (array != 0)
-            {
-                *(int*)(array + OFF_ARRAY_DATA) = targetIndex;
+                if (f.Name.Contains("clear") && f.Name.Contains("NativeMethodInfoPtr"))
+                {
+                    _vectorClearMi = (nint)f.GetValue(null);
+                    if (_vectorClearMi != 0)
+                    {
+                        _vectorClear = Marshal.GetDelegateForFunctionPointer<d_VectorClear>(*(nint*)_vectorClearMi);
+                        Log($"STLVector.clear resolved via {f.Name}");
+                    }
+                }
+                else if (f.Name.Contains("push_back") && f.Name.Contains("NativeMethodInfoPtr"))
+                {
+                    _vectorPushBackMi = (nint)f.GetValue(null);
+                    if (_vectorPushBackMi != 0)
+                    {
+                        _vectorPushBack = Marshal.GetDelegateForFunctionPointer<d_VectorPushBack>(*(nint*)_vectorPushBackMi);
+                        Log($"STLVector.push_back resolved via {f.Name}");
+                    }
+                }
             }
         }
-    }
+        catch (System.Exception ex) { Log($"STLVector resolve: {ex.Message}"); }
 
-    /// <summary>
-    /// Set up a CommandInfo for a guard command.
-    /// </summary>
-    private static void SetupGuardCommand(nint cmdInfo, int charaIndex)
-    {
-        ClearCommandInfo(cmdInfo);
-
-        *(int*)(cmdInfo + OFF_CMD_OWNERINDEX)     = charaIndex;
-        *(int*)(cmdInfo + OFF_CMD_CHARAIDX)       = charaIndex;
-        *(int*)(cmdInfo + OFF_CMD_COMMANDTYPE)    = COMMAND_TYPE_GUARD;
-        *(int*)(cmdInfo + OFF_CMD_COMMANDSUBTYPE) = 0;
-        *(int*)(cmdInfo + OFF_CMD_COMMANDSUBINDEX) = 0;
-        *(byte*)(cmdInfo + OFF_CMD_ISTARGETENEMY) = 0;
-        *(int*)(cmdInfo + OFF_CMD_TARGETTYPE)     = CMD_TARGET_FRIEND;
-
-        // Target self
-        nint idxList = *(nint*)(cmdInfo + OFF_CMD_TARGETIDXLIST);
-        if (idxList != 0)
+        // RVA fallback for generic shared implementations
+        if (_vectorClear == null || _vectorPushBack == null)
         {
-            *(int*)(idxList + OFF_IDXLIST_NUM) = 1;
-            nint array = *(nint*)(idxList + OFF_IDXLIST_ARRAY);
-            if (array != 0)
-                *(int*)(array + OFF_ARRAY_DATA) = charaIndex;
+            Log("Trying RVA fallback for STLVector methods");
+            try
+            {
+                var proc = System.Diagnostics.Process.GetCurrentProcess();
+                foreach (System.Diagnostics.ProcessModule mod in proc.Modules)
+                {
+                    if (mod.ModuleName != null &&
+                        mod.ModuleName.Equals("GameAssembly.dll", System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        nint baseAddr = mod.BaseAddress;
+                        if (_vectorClear == null)
+                        {
+                            // CppUtil.STLVector<object>.clear @ 0x180EA5850
+                            _vectorClear = Marshal.GetDelegateForFunctionPointer<d_VectorClear>(
+                                baseAddr + (nint)0xEA5850);
+                            Log("STLVector.clear resolved via RVA");
+                        }
+                        if (_vectorPushBack == null)
+                        {
+                            // CppUtil.STLVector<object>.push_back @ 0x180EA6C40
+                            _vectorPushBack = Marshal.GetDelegateForFunctionPointer<d_VectorPushBack>(
+                                baseAddr + (nint)0xEA6C40);
+                            Log("STLVector.push_back resolved via RVA");
+                        }
+                        break;
+                    }
+                }
+            }
+            catch (System.Exception ex) { Log($"STLVector RVA fallback: {ex.Message}"); }
         }
-    }
 
-    /// <summary>
-    /// Set up a CommandInfo for an item command.
-    /// </summary>
-    private static void SetupItemCommand(nint cmdInfo, int charaIndex, int itemId,
-        int targetIndex, bool isTargetEnemy)
-    {
-        ClearCommandInfo(cmdInfo);
-
-        *(int*)(cmdInfo + OFF_CMD_OWNERINDEX)     = charaIndex;
-        *(int*)(cmdInfo + OFF_CMD_CHARAIDX)       = charaIndex;
-        *(int*)(cmdInfo + OFF_CMD_COMMANDTYPE)    = COMMAND_TYPE_ITEM;
-        *(int*)(cmdInfo + OFF_CMD_COMMANDSUBTYPE) = itemId;
-        *(int*)(cmdInfo + OFF_CMD_COMMANDSUBINDEX) = 0;
-        *(byte*)(cmdInfo + OFF_CMD_ISTARGETENEMY) = isTargetEnemy ? (byte)1 : (byte)0;
-
-        int targetType = isTargetEnemy ? CMD_TARGET_ENEMY : CMD_TARGET_FRIEND;
-        *(int*)(cmdInfo + OFF_CMD_TARGETTYPE) = targetType;
-
-        nint idxList = *(nint*)(cmdInfo + OFF_CMD_TARGETIDXLIST);
-        if (idxList != 0)
-        {
-            *(int*)(idxList + OFF_IDXLIST_NUM) = 1;
-            nint array = *(nint*)(idxList + OFF_IDXLIST_ARRAY);
-            if (array != 0)
-                *(int*)(array + OFF_ARRAY_DATA) = targetIndex;
-        }
+        if (_vectorClear == null || _vectorPushBack == null)
+            Log("STLVector methods STILL not resolved — will fall back to vanilla repeat");
     }
 
     // ── Main hook ────────────────────────────────────────────────
@@ -424,288 +261,206 @@ public static unsafe class NativeAutoBattlePatch
     {
         try
         {
-            // Read battle state from pointers
+            // Always have the trampoline as our safety net
+            if (_vectorClear == null || _vectorPushBack == null || _commandInfoClass == 0)
+            {
+                _processHook.Trampoline(instance, commandIndex, methodInfo);
+                return;
+            }
+
+            // Read battle state
             var battleState = BattleState.ReadBattleState(instance);
             if (battleState == null)
             {
-                if (_logCount < MaxLogLines)
-                {
-                    Melon<Core>.Logger.Warning("[AutoBattle] Could not read battle state, falling back to original");
-                    _logCount++;
-                }
+                _processHook.Trampoline(instance, commandIndex, methodInfo);
+                return;
+            }
+
+            // Get the recorder
+            nint recorder = GetRecorder();
+            if (recorder == 0)
+            {
                 _processHook.Trampoline(instance, commandIndex, methodInfo);
                 return;
             }
 
             var battle = battleState.Value;
-            bool anyRuleApplied = false;
+            bool injected = false;
 
-            // Get the BtlCommandRecorder instance for SendCommand calls
-            nint recorder = GetCommandRecorder();
-
-            // Check if SendCommand infrastructure is available
-            bool hasSendCommand = (_sendCommandPtr != 0 && recorder != 0 && _commandInfoClass != 0 && _commandInfoCtorPtr != 0);
-
-            // Evaluate rules for each living player character
-            for (int i = 0; i < battle.Players.Length; i++)
+            // Inject commands into repeat storage for each character
+            for (int i = 0; i < battle.Players.Length && i < 4; i++)
             {
                 var player = battle.Players[i];
                 if (player.IsDead) continue;
 
-                var resolvedActions = _ruleEngine.EvaluateForCharacter(i, battle);
-                if (resolvedActions == null || resolvedActions.Count == 0) continue;
+                var actions = _ruleEngine.EvaluateForCharacter(i, battle);
+                if (actions == null || actions.Count == 0) continue;
 
-                // Submit only the FIRST action — multi-brave breaks the game's command system
-                // The game expects 1 command per character from autobattle
-                var firstAction = resolvedActions[0];
-                foreach (var action in new[] { firstAction })
+                // Map player index to recorder array index
+                int charaId = player.Index; // 0, 100, 200, 300
+                int arrayIdx = charaId switch { 0 => 0, 100 => 1, 200 => 2, 300 => 3, _ => -1 };
+                if (arrayIdx < 0) continue;
+
+                // Get the STLVector for this character from recorder+0x20
+                nint vectorArray = *(nint*)(recorder + OFF_RECORDER_VECTORS);
+                if (vectorArray == 0) continue;
+                if (arrayIdx >= *(int*)(vectorArray + 0x18)) continue; // bounds check
+                nint vector = *(nint*)(vectorArray + 0x20 + arrayIdx * 8);
+                if (vector == 0) continue;
+
+                // Clear existing commands in this vector
+                _vectorClear(vector, _vectorClearMi);
+
+                // Push our commands
+                foreach (var action in actions)
                 {
-                    switch (action.Type)
-                    {
-                        case ActionType.Attack:
-                            if (SubmitAttackCommand(instance, recorder, player.Index, action.TargetIndex, action.IsTargetEnemy))
-                            {
-                                anyRuleApplied = true;
-                                LogAction(player.Index, $"Attack target {action.TargetIndex} (enemy={action.IsTargetEnemy})");
-                            }
-                            break;
+                    nint cmd = AllocCommandInfo();
+                    if (cmd == 0) break;
 
-                        case ActionType.Ability:
-                            if (hasSendCommand)
-                            {
-                                nint cmdInfo = AllocateCommandInfo();
-                                if (cmdInfo != 0)
-                                {
-                                    // The game uses commandType MAGIC(2) for white/black/time magic,
-                                    // ABILITY(3) for job-specific abilities.
-                                    // The abilityId from the DSL is the commandSubType (ability table index).
-                                    int cmdType = COMMAND_TYPE_MAGIC;
-                                    SetupAbilityCommand(cmdInfo, player.Index, cmdType, action.AbilityId,
-                                        action.TargetIndex, action.IsTargetEnemy);
-
-                                    if (CallSendCommand(recorder, instance, player.Index, cmdInfo))
-                                    {
-                                        anyRuleApplied = true;
-                                        LogAction(player.Index,
-                                            $"Ability #{action.AbilityId} (type={cmdType}) -> target {action.TargetIndex} (enemy={action.IsTargetEnemy})");
-                                    }
-                                    else
-                                    {
-                                        FallbackAttack(instance, recorder, player, action, battle, ref anyRuleApplied,
-                                            $"Ability #{action.AbilityId} SendCommand failed");
-                                    }
-                                }
-                                else
-                                {
-                                    FallbackAttack(instance, recorder, player, action, battle, ref anyRuleApplied,
-                                        $"Ability #{action.AbilityId} (CommandInfo alloc failed)");
-                                }
-                            }
-                            else
-                            {
-                                FallbackAttack(instance, recorder, player, action, battle, ref anyRuleApplied,
-                                    $"Ability #{action.AbilityId} (no SendCommand)");
-                            }
-                            break;
-
-                        case ActionType.Guard:
-                            if (hasSendCommand)
-                            {
-                                nint guardCmd = AllocateCommandInfo();
-                                if (guardCmd != 0)
-                                {
-                                    SetupGuardCommand(guardCmd, player.Index);
-
-                                    if (CallSendCommand(recorder, instance, player.Index, guardCmd))
-                                    {
-                                        anyRuleApplied = true;
-                                        LogAction(player.Index, "Guard");
-                                    }
-                                    else
-                                    {
-                                        LogAction(player.Index, "Guard SendCommand failed, skipping");
-                                    }
-                                }
-                                else
-                                {
-                                    LogAction(player.Index, "Guard (CommandInfo alloc failed, skipping)");
-                                }
-                            }
-                            else
-                            {
-                                LogAction(player.Index, "Guard (no SendCommand available, skipping)");
-                            }
-                            break;
-
-                        case ActionType.Item:
-                            if (hasSendCommand)
-                            {
-                                nint itemCmd = AllocateCommandInfo();
-                                if (itemCmd != 0)
-                                {
-                                    SetupItemCommand(itemCmd, player.Index, action.ItemId,
-                                        action.TargetIndex, action.IsTargetEnemy);
-
-                                    if (CallSendCommand(recorder, instance, player.Index, itemCmd))
-                                    {
-                                        anyRuleApplied = true;
-                                        LogAction(player.Index,
-                                            $"Item #{action.ItemId} -> target {action.TargetIndex} (enemy={action.IsTargetEnemy})");
-                                    }
-                                    else
-                                    {
-                                        FallbackAttack(instance, recorder, player, action, battle, ref anyRuleApplied,
-                                            $"Item #{action.ItemId} SendCommand failed");
-                                    }
-                                }
-                                else
-                                {
-                                    FallbackAttack(instance, recorder, player, action, battle, ref anyRuleApplied,
-                                        $"Item #{action.ItemId} (CommandInfo alloc failed)");
-                                }
-                            }
-                            else
-                            {
-                                FallbackAttack(instance, recorder, player, action, battle, ref anyRuleApplied,
-                                    $"Item #{action.ItemId} (no SendCommand)");
-                            }
-                            break;
-
-                        case ActionType.Default:
-                            LogAction(player.Index, "Default (original behavior)");
-                            break;
-                    }
+                    FillCommandInfo(cmd, arrayIdx, action);
+                    _vectorPushBack(vector, cmd, _vectorPushBackMi);
                 }
+
+                // Clear the flag at recorder+0x28 so PlaybackRecords uses our commands
+                nint flagArray = *(nint*)(recorder + OFF_RECORDER_FLAGS);
+                if (flagArray != 0 && arrayIdx < *(int*)(flagArray + 0x18))
+                    *(byte*)(flagArray + 0x20 + arrayIdx) = 0;
+
+                injected = true;
+                _logCount++;
+                if (_logCount <= MaxLogs)
+                    Log($"Player {i} (idx={arrayIdx}): {actions.Count} commands injected");
             }
 
-            // If no rules applied for any character, fall back to original behavior
-            if (!anyRuleApplied)
-            {
-                _processHook.Trampoline(instance, commandIndex, methodInfo);
-            }
+            // Set repeat mode so PlaybackRecords reads from our vectors
+            if (injected)
+                *(int*)(recorder + OFF_RECORDER_MODE) = -1;
+
+            // ALWAYS call trampoline — it runs PlaybackRecords + EndWaitTurnPhase
+            _processHook.Trampoline(instance, commandIndex, methodInfo);
         }
         catch (System.Exception ex)
         {
-            if (_logCount < MaxLogLines)
-            {
-                Melon<Core>.Logger.Warning($"[AutoBattle] Hook exception: {ex.Message}");
-                _logCount++;
-            }
-            // Always fall back to original on error
+            _logCount++;
+            if (_logCount <= 10) Warn($"Hook error: {ex.Message}");
             try { _processHook.Trampoline(instance, commandIndex, methodInfo); } catch { }
         }
     }
 
-    // ── Command submission helpers ───────────────────────────────
+    // ── CommandInfo building ──────────────────────────────────────
 
-    /// <summary>
-    /// Submit an attack command. Uses AddAttackCommand with the proper BtlCommandRecorder instance.
-    /// </summary>
-    private static bool SubmitAttackCommand(nint btlLayoutCtrl, nint recorder, int charaIndex, int targetIndex, bool isTargetEnemy)
+    private static nint AllocCommandInfo()
     {
-        if (_addAttackCommandPtr == 0) return false;
-
+        if (_commandInfoClass == 0 || _commandInfoCtorPtr == 0) return 0;
         try
         {
-            // AddAttackCommand is an instance method on BtlCommandRecorder:
-            // void AddAttackCommand(BtlCommandRecorder* this, BtlLayoutCtrl*, int charaIndex, int targetIndex, bool isTargetEnemy, MethodInfo*)
-            var fn = (delegate* unmanaged[Cdecl]<nint, nint, int, int, byte, nint, void>)_addAttackCommandPtr;
-
-            // Use the recorder if available, otherwise pass btlLayoutCtrl as this (legacy behavior)
-            nint thisPtr = (recorder != 0) ? recorder : btlLayoutCtrl;
-            fn(thisPtr, btlLayoutCtrl, charaIndex, targetIndex, isTargetEnemy ? (byte)1 : (byte)0, _addAttackCommandMethodInfo);
-            return true;
+            nint obj = IL2CPP.il2cpp_object_new(_commandInfoClass);
+            if (obj == 0) return 0;
+            var ctor = (delegate* unmanaged[Cdecl]<nint, nint, void>)_commandInfoCtorPtr;
+            ctor(obj, _commandInfoCtorMi);
+            return obj;
         }
-        catch (System.Exception ex)
+        catch { return 0; }
+    }
+
+    private static void FillCommandInfo(nint cmd, int charaArrayIdx, ResolvedAction action)
+    {
+        // Clear first
+        if (_commandInfoClearPtr != 0)
         {
-            if (_logCount < MaxLogLines)
-            {
-                Melon<Core>.Logger.Warning($"[AutoBattle] AddAttackCommand failed: {ex.Message}");
-                _logCount++;
-            }
-            return false;
+            var clear = (delegate* unmanaged[Cdecl]<nint, nint, void>)_commandInfoClearPtr;
+            clear(cmd, _commandInfoClearMi);
+        }
+
+        *(int*)(cmd + OFF_OWNER_INDEX) = charaArrayIdx;
+        *(int*)(cmd + OFF_CHARA_IDX) = charaArrayIdx;
+        *(int*)(cmd + OFF_AP_COST) = 1; // ALWAYS 1 for normal commands
+
+        switch (action.Type)
+        {
+            case ActionType.Attack:
+                *(int*)(cmd + OFF_COMMAND_TYPE) = CMD_FIGHT;
+                *(int*)(cmd + OFF_TARGET_TYPE) = 1; // single target
+                *(byte*)(cmd + OFF_IS_TARGET_ENEMY) = action.IsTargetEnemy ? (byte)1 : (byte)0;
+                SetTarget(cmd, action.TargetIndex);
+                break;
+
+            case ActionType.Ability:
+                *(int*)(cmd + OFF_COMMAND_TYPE) = CMD_MAGIC; // PlaybackRecords validates and may convert
+                *(int*)(cmd + OFF_COMMAND_SUB_TYPE) = action.AbilityId;
+                *(byte*)(cmd + OFF_IS_TARGET_ENEMY) = action.IsTargetEnemy ? (byte)1 : (byte)0;
+                *(int*)(cmd + OFF_TARGET_TYPE) = action.IsTargetEnemy ? 1 : 1; // single target
+                SetTarget(cmd, action.TargetIndex);
+                break;
+
+            case ActionType.Guard:
+                *(int*)(cmd + OFF_COMMAND_TYPE) = CMD_GUARD;
+                *(int*)(cmd + OFF_TARGET_TYPE) = 1;
+                *(byte*)(cmd + OFF_IS_TARGET_ENEMY) = 0;
+                SetTarget(cmd, charaArrayIdx);
+                break;
+
+            case ActionType.Item:
+                *(int*)(cmd + OFF_COMMAND_TYPE) = CMD_ITEM;
+                *(int*)(cmd + OFF_COMMAND_SUB_TYPE) = action.ItemId;
+                *(byte*)(cmd + OFF_IS_TARGET_ENEMY) = action.IsTargetEnemy ? (byte)1 : (byte)0;
+                *(int*)(cmd + OFF_TARGET_TYPE) = 1;
+                SetTarget(cmd, action.TargetIndex);
+                break;
+
+            default:
+                // Default to attack weakest
+                *(int*)(cmd + OFF_COMMAND_TYPE) = CMD_FIGHT;
+                *(int*)(cmd + OFF_TARGET_TYPE) = 1;
+                *(byte*)(cmd + OFF_IS_TARGET_ENEMY) = 1;
+                SetTarget(cmd, action.TargetIndex);
+                break;
         }
     }
 
-    /// <summary>
-    /// Submit a command via SendCommand (for ability/guard/item).
-    /// </summary>
-    private static bool CallSendCommand(nint recorder, nint btlLayoutCtrl, int charaIndex, nint commandInfo)
+    private static void SetTarget(nint cmd, int targetIndex)
     {
-        if (_sendCommandPtr == 0 || recorder == 0 || commandInfo == 0) return false;
+        nint idxList = *(nint*)(cmd + OFF_TARGET_IDX_LIST);
+        if (idxList != 0)
+        {
+            *(int*)(idxList + 0x18) = 1; // num = 1
+            nint array = *(nint*)(idxList + 0x10);
+            if (array != 0)
+                *(int*)(array + 0x20) = targetIndex; // elements[0]
+        }
+    }
 
+    // ── Helpers ───────────────────────────────────────────────────
+
+    private static nint GetRecorder()
+    {
+        if (_getGameData == null) return 0;
         try
         {
-            // void SendCommand(BtlCommandRecorder* this, BtlLayoutCtrl*, int charaIndex, CommandInfo*, bool IsRemoveBp, bool ChangeSerial, MethodInfo*)
-            var fn = (delegate* unmanaged[Cdecl]<nint, nint, int, nint, byte, byte, nint, void>)_sendCommandPtr;
-            fn(recorder, btlLayoutCtrl, charaIndex, commandInfo, 0, 0, _sendCommandMethodInfo);
-            return true;
+            nint gameData = _getGameData(_getGameData_mi);
+            if (gameData == 0) return 0;
+            return *(nint*)(gameData + 0xE8);
         }
-        catch (System.Exception ex)
-        {
-            if (_logCount < MaxLogLines)
-            {
-                Melon<Core>.Logger.Warning($"[AutoBattle] SendCommand failed: {ex.Message}");
-                _logCount++;
-            }
-            return false;
-        }
+        catch { return 0; }
     }
 
-    /// <summary>
-    /// Fall back to attack when ability/item/guard submission is not available or fails.
-    /// </summary>
-    private static void FallbackAttack(nint btlLayoutCtrl, nint recorder, CharacterSnapshot player,
-        ResolvedAction action, BattleSnapshot battle, ref bool anyRuleApplied, string reason)
+    private static void ResolveMethod(System.Type type, string fieldName,
+        out nint funcPtr, out nint miPtr, string label)
     {
-        int fallbackTarget = action.IsTargetEnemy ? action.TargetIndex : FindWeakestEnemyIndex(battle);
-        if (fallbackTarget >= 0 && SubmitAttackCommand(btlLayoutCtrl, recorder, player.Index, fallbackTarget, true))
+        funcPtr = 0; miPtr = 0;
+        try
         {
-            anyRuleApplied = true;
-            LogAction(player.Index, $"{reason}, fallback: Attack target {fallbackTarget}");
+            var field = type.GetField(fieldName,
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            if (field == null) { Log($"{label}: field not found"); return; }
+            miPtr = (nint)field.GetValue(null);
+            if (miPtr == 0) { Log($"{label}: null MI"); return; }
+            funcPtr = *(nint*)miPtr;
+            Log($"{label} resolved @ 0x{funcPtr:X}");
         }
+        catch (System.Exception ex) { Log($"{label}: {ex.Message}"); }
     }
 
-    /// <summary>
-    /// Log an autobattle action (rate-limited).
-    /// </summary>
-    private static void LogAction(int playerIndex, string message)
-    {
-        if (_logCount < MaxLogLines)
-        {
-            Melon<Core>.Logger.Msg($"[AutoBattle] Player {playerIndex} -> {message}");
-            _logCount++;
-        }
-    }
-
-    // ── Legacy compatibility ─────────────────────────────────────
-
-    /// <summary>
-    /// Legacy AddAttackCommand call for backwards compatibility.
-    /// Kept as fallback if the new 6-arg calling convention causes issues.
-    /// </summary>
-    private static void CallAddAttackCommand(nint btlLayoutCtrl, int charaIndex, int targetIndex, bool isTargetEnemy)
-    {
-        // Call native function pointer directly with proper 6-arg convention
-        nint recorder = GetCommandRecorder();
-        nint thisPtr = (recorder != 0) ? recorder : btlLayoutCtrl;
-        var fn = (delegate* unmanaged[Cdecl]<nint, nint, int, int, byte, nint, void>)_addAttackCommandPtr;
-        fn(thisPtr, btlLayoutCtrl, charaIndex, targetIndex, isTargetEnemy ? (byte)1 : (byte)0, _addAttackCommandMethodInfo);
-    }
-
-    private static int FindWeakestEnemyIndex(BattleSnapshot battle)
-    {
-        int bestIdx = -1;
-        int bestHp = int.MaxValue;
-        foreach (var e in battle.Enemies)
-        {
-            if (e.IsDead) continue;
-            if (e.Hp < bestHp)
-            {
-                bestHp = e.Hp;
-                bestIdx = e.Index;
-            }
-        }
-        return bestIdx;
-    }
+    private static void Log(string msg) => Melon<Core>.Logger.Msg($"[AutoBattle] {msg}");
+    private static void Warn(string msg) => Melon<Core>.Logger.Warning($"[AutoBattle] {msg}");
 }
