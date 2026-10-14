@@ -24,4 +24,9 @@ echo "Running headless Ghidra patch for $PROJECT_NAME from $CODE_BIN"
   -import "$CODE_BIN" \
   -scriptPath ghidra_scripts \
   -processor ARM:LE:32:v7 \
-  -postScript 999k-limit-patch.py
+  -overwrite \
+  -postScript 999k-limit-patch.py \
+  -postScript export_code_bin.py "$(realpath -m "$CODE_BIN.patched")"
+
+# Ghidra only edits its project copy; replace code.bin with the exported patched bytes.
+mv "$CODE_BIN.patched" "$CODE_BIN"
