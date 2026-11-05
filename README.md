@@ -1,65 +1,15 @@
-# A bravely default editor toolkit
+# bs-999k — Bravely Second (3DS) 999k damage-cap
 
-## Quick start
+Scaffolding worktree for a Bravely Second: End Layer 999k damage/heal cap mod.
+Based on the Bravely Default `release/999k-3ds` tooling lineage.
 
-- `make help` for target overview
-- Recommended env manager: Pixi
+**Status:** dump-ready pipeline. No game data in git. Scan stops before patching.
+
+See **[BRAVELY_SECOND.md](./BRAVELY_SECOND.md)** for dump steps and the one-command ingest path.
 
 ```bash
-curl -fsSL https://pixi.sh/install.sh | bash
-pixi install
-pixi run crowd-unpack
+# After a dump lands on blackmage:
+~/projects/bs-999k/scripts/ingest.sh ~/bs-dump/incoming/<dump.cia|dump.3ds|code.bin>
 ```
 
-## Arcanist (Forked from bravely crowd)
-
-### Description
-
-Extracts a spread sheet of editable values from a bravely default bin file. See arcanist/README.md
-
-## Shell scripts
-
-- Unpack a CIA: `make cia-unpack cia_file=cias/bd.cia`
-- Crowd data pipeline: `pixi run crowd-unpack` / `pixi run crowd-pack`
-- IPS generation: `make ips-crowd-patch` / `make ips-99k-patch`
-
-## Ghidra
-
-Patch example (99k limit IPS):
-```bash
-make ghidra-setup   # one-time (if using local script)
-make ips-99k-patch  # produces build/dev/patches/99k-limit.ips
-```
-
-## Environment: Pixi
-
-Pixi replaces previous micromamba/uv workflow.
-
-Install & bootstrap:
-```bash
-curl -fsSL https://pixi.sh/install.sh | bash
-pixi install
-```
-
-Common tasks:
-```bash
-pixi run crowd-unpack
-pixi run crowd-pack
-pixi run ips-crowd
-pixi run ips-99k
-```
-
-Enter shell:
-```bash
-pixi shell
-```
-
-List tasks:
-```bash
-pixi task list
-```
-
-## Legacy
-
-Old micromamba references are deprecated; use Pixi tasks instead.
-
+Title IDs: USA `000400000017BA00` (preferred), EUR `000400000017BB00`, JPN `00040000000DC800`.

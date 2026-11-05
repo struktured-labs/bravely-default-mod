@@ -13,3 +13,30 @@ romfs*
 citra*
 *.pickle
 cias*
+
+# Dumps / extracted game binaries (never commit)
+*.cia
+*.CIA
+*.3ds
+*.3DS
+*.cci
+*.cxi
+*.CXI
+*.app
+code.bin
+code.bin.*
+*.code
+exefs.bin
+romfs.bin
+exheader.bin
+**/exefs_dir/
+**/romfs_dir/
+ghidra_projects/
+*.rep
+*.gpr
+
+# Local dump staging (also lives outside repo at ~/bs-dump)
+dumps/
+incoming/
+extracted/
+.venv/

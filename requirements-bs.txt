@@ -1,0 +1,2 @@
+capstone>=5.0
+pyctr>=0.7
