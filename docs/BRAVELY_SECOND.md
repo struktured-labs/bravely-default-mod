@@ -151,3 +151,12 @@ systemctl --user enable --now bs-999k-ingest.path
 - Worktree: `~/projects/bs-999k`
 - Dump staging: `~/bs-dump/incoming`
 - Do not commit dumps / `code.bin` / `.cia` / `.3ds`
+
+## Scanner regression (BD code.bin)
+
+Harmless sanity check on the known Bravely Default `code.bin`
+(`SHA-256 ddc6653f…`, from `bd-999k-release` build tree):
+
+- Raw LE `0x270F` dword hits with references: **~125** (BD `SITES_ANALYSIS.md` reported **120** patched sites; small delta from analysis/base differences is OK).
+- Site addresses are **file offsets** into `code.bin` (`IMAGE_BASE=0`) for IPS readiness.
+- DateTime auto-flag is best-effort; full review still required (BD had ~101 DateTime sites).
